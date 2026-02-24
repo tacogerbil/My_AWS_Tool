@@ -106,3 +106,76 @@ def test_list_instances_for_cloning(service, mock_adapter):
     mock_adapter.describe_instances.assert_called_once_with("us-west-2", tag_filters=tags)
     assert len(result) == 1
     assert result[0].instance_id == "i-123"
+
+
+# ---------------------------------------------------------------------------
+# launch_instances tests
+# ---------------------------------------------------------------------------
+
+def test_launch_instances_calls_adapter(service, mock_adapter):
+    """Service.launch_instances delegates to adapter.run_instances and returns its result."""
+    from tools.ec2_launcher.models import LaunchConfig, LaunchResult
+
+    cfg = LaunchConfig(
+        image_id="ami-test",
+        instance_type="t3.micro",
+        volume_gb=30,
+        volume_type="gp3",
+        vpc_id="vpc-1",
+        subnet_id="subnet-1",
+        sg_ids=["sg-1"],
+        key_name="my-key",
+        instance_count=1,
+        instance_names=["TestBox"],
+    )
+    expected = LaunchResult(instance_ids=["i-abc123"], instance_names=["TestBox"], region="us-west-2")
+    mock_adapter.run_instances.return_value = expected
+
+    result = service.launch_instances(cfg)
+
+    mock_adapter.run_instances.assert_called_once_with("us-west-2", cfg)
+    assert result.instance_ids == ["i-abc123"]
+    assert result.instance_names == ["TestBox"]
+    assert result.error is None
+
+
+def test_launch_instances_returns_error_result_on_adapter_failure(service, mock_adapter):
+    """Adapter exceptions are caught and returned as a failed LaunchResult, not raised."""
+    from tools.ec2_launcher.models import LaunchConfig
+
+    cfg = LaunchConfig(
+        image_id="ami-bad",
+        instance_type="t3.micro",
+        volume_gb=30,
+        volume_type="gp3",
+        vpc_id="vpc-1",
+        subnet_id="subnet-1",
+        sg_ids=[],
+        key_name="key",
+        instance_count=1,
+    )
+    mock_adapter.run_instances.side_effect = RuntimeError("AuthFailure")
+
+    result = service.launch_instances(cfg)
+
+    assert result.instance_ids == []
+    assert result.error is not None
+    assert "AuthFailure" in result.error
+
+
+def test_describe_instances_by_ids_delegates_to_adapter(service, mock_adapter):
+    """describe_instances_by_ids passes the ID list straight to adapter.describe_instances."""
+    from core.models import Instance
+
+    inst = Instance(
+        instance_id="i-poll", instance_type="t3.micro", state="running",
+        public_ip=None, private_ip="10.0.0.5", vpc_id="vpc-1", subnet_id="subnet-1"
+    )
+    mock_adapter.describe_instances.return_value = [inst]
+
+    result = service.describe_instances_by_ids(["i-poll"])
+
+    mock_adapter.describe_instances.assert_called_once_with("us-west-2", instance_ids=["i-poll"])
+    assert len(result) == 1
+    assert result[0].state == "running"
+

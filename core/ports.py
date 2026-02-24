@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any
-from core.models import Vpc, Subnet, SecurityGroup, Instance
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from core.models import Instance, SecurityGroup, Subnet, Vpc
+
+if TYPE_CHECKING:
+    from tools.ec2_launcher.models import LaunchConfig, LaunchResult
 
 class CloudProviderPort(ABC):
     """
@@ -73,4 +79,14 @@ class CloudProviderPort(ABC):
     @abstractmethod
     def list_buckets(self) -> List[str]:
         """List all S3 buckets available to the account."""
+        pass
+
+    @abstractmethod
+    def run_instances(self, region: str, config: "LaunchConfig") -> "LaunchResult":
+        """Launch EC2 instances described by config.
+
+        Returns a LaunchResult with the assigned instance IDs. On complete
+        failure the result has an empty ``instance_ids`` list and a non-None
+        ``error`` string.
+        """
         pass

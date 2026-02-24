@@ -7,7 +7,7 @@ Pure dataclasses only — no I/O, no AWS SDK, no Qt.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -78,3 +78,20 @@ class LaunchConfig:
     instance_count: int = 1
     instance_names: List[str] = field(default_factory=list)
     volumes: List[VolumeConfig] = field(default_factory=list)
+
+
+@dataclass
+class LaunchResult:
+    """Outcome of a run_instances call.
+
+    ``instance_ids`` and ``instance_names`` are parallel lists — index N in
+    ``instance_ids`` matches index N in ``instance_names``.  On complete
+    failure (e.g. auth error), ``instance_ids`` is empty and ``error`` is set.
+    Individual per-instance errors are tracked via ``per_instance_errors``.
+    """
+
+    instance_ids: List[str]
+    instance_names: List[str]          # Names from LaunchConfig (parallel to ids)
+    region: str
+    error: Optional[str] = None        # Non-None → entire launch failed
+    per_instance_errors: List[Tuple[str, str]] = field(default_factory=list)

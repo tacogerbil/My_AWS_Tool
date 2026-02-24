@@ -317,3 +317,99 @@ class AwsAdapter(CloudProviderPort):
         except (ClientError, BotoCoreError) as e:
             logger.error(f"Failed to list buckets: {e}")
             return []
+
+    def run_instances(self, region: str, config: "LaunchConfig") -> "LaunchResult":
+        """Launch EC2 instances per LaunchConfig; returns LaunchResult with IDs.
+
+        Translates our clean LaunchConfig into the full boto3 run_instances
+        payload — block device mappings, tag specifications, network interface.
+        Each instance gets its own Name tag so they appear individually named
+        in the AWS console.
+        """
+        from tools.ec2_launcher.models import LaunchConfig, LaunchResult  # local to avoid circular
+
+        if region != self.session.region_name:
+            self.ec2 = self.session.client("ec2", region_name=region)
+
+        launched_ids: List[str] = []
+        errors: List[tuple] = []
+
+        # Build common block device mapping (root volume + any extras)
+        bdm = [
+            {
+                "DeviceName": v.device_name,
+                "Ebs": {
+                    "VolumeSize": v.size_gb,
+                    "VolumeType": v.volume_type,
+                    "DeleteOnTermination": v.delete_on_termination,
+                    "Encrypted": v.encrypted,
+                    **({"Iops": v.iops} if v.iops else {}),
+                    **({"Throughput": v.throughput_mbps} if v.throughput_mbps else {}),
+                },
+            }
+            for v in (config.volumes or [])
+        ]
+        if not bdm:
+            # Fallback: at minimum set root volume size from volume_gb
+            bdm = [
+                {
+                    "DeviceName": "/dev/sda1",
+                    "Ebs": {
+                        "VolumeSize": config.volume_gb,
+                        "VolumeType": config.volume_type,
+                        "DeleteOnTermination": True,
+                    },
+                }
+            ]
+
+        # Launch one instance per name so each gets its own tagged Name
+        names = config.instance_names or [f"Instance-{i+1}" for i in range(config.instance_count)]
+        for name in names:
+            tags = {**config.tags, "Name": name}
+            tag_spec = [
+                {
+                    "ResourceType": "instance",
+                    "Tags": [{"Key": k, "Value": v} for k, v in tags.items()],
+                }
+            ]
+            try:
+                resp = self.ec2.run_instances(
+                    ImageId=config.image_id,
+                    InstanceType=config.instance_type,
+                    MinCount=1,
+                    MaxCount=1,
+                    KeyName=config.key_name,
+                    NetworkInterfaces=[
+                        {
+                            "DeviceIndex": 0,
+                            "SubnetId": config.subnet_id,
+                            "Groups": config.sg_ids,
+                            "AssociatePublicIpAddress": True,
+                        }
+                    ],
+                    BlockDeviceMappings=bdm,
+                    TagSpecifications=tag_spec,
+                )
+                iid = resp["Instances"][0]["InstanceId"]
+                launched_ids.append(iid)
+                logger.info("Launched instance %s (%s)", iid, name)
+            except (ClientError, BotoCoreError) as exc:
+                logger.error("Failed to launch '%s': %s", name, exc)
+                errors.append((name, str(exc)))
+
+        if not launched_ids and errors:
+            return LaunchResult(
+                instance_ids=[],
+                instance_names=[],
+                region=region,
+                error=errors[0][1],
+                per_instance_errors=errors,
+            )
+
+        return LaunchResult(
+            instance_ids=launched_ids,
+            instance_names=names[: len(launched_ids)],
+            region=region,
+            per_instance_errors=errors,
+        )
+

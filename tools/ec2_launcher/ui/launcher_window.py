@@ -24,6 +24,7 @@ from PySide6.QtCore import Qt
 
 from tools.ec2_launcher.models import SectionPatch
 from tools.ec2_launcher.ui.config_form import ConfigForm
+from tools.ec2_launcher.ui.launch_monitor import LaunchMonitorDialog
 from tools.ec2_launcher.ui.reference_panel import ReferencePanel
 from ui.common.styles import get_checkbox_style
 
@@ -294,28 +295,26 @@ class LauncherWindow(QWidget):
             )
             return
 
-        msg = (
-            f"Launch instance?\n\n"
-            f"AMI:       {config.image_id}\n"
-            f"Type:      {config.instance_type}\n"
-            f"Volume:    {config.volume_gb} GiB {config.volume_type}\n"
-            f"VPC:       {config.vpc_id}\n"
-            f"Subnet:    {config.subnet_id}\n"
-            f"SGs:       {', '.join(config.sg_ids) or '(none)'}\n"
-            f"Key Pair:  {config.key_name}"
-        )
-        reply = QMessageBox.question(
-            self, "Confirm Launch", msg,
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
+        if self._service is None:
+            # No real service wired — open monitor backed by mock adapter
+            from adapters.mock_adapter import MockAdapter
+            from tools.ec2_launcher.services import LauncherService
+            svc = LauncherService(MockAdapter(), region="us-east-1")
+        else:
+            svc = self._service
 
-        # run_instances wiring deferred — placeholder only
-        QMessageBox.information(
-            self, "Not Yet Implemented",
-            "run_instances() wiring is pending.\nConfiguration validated successfully.",
-        )
+        # Disable the button to prevent double-clicks while the monitor is open
+        self._launch_btn.setEnabled(False)
+        self._launch_btn.setText("Launching…")
+
+        dlg = LaunchMonitorDialog(config=config, service=svc, parent=self)
+        dlg.finished.connect(self._on_monitor_closed)
+        dlg.show()
+
+    def _on_monitor_closed(self) -> None:
+        """Re-enable the launch button once the monitor dialog is dismissed."""
+        self._launch_btn.setEnabled(True)
+        self._launch_btn.setText("Launch Instance")
 
     # ------------------------------------------------------------------
     # Helpers

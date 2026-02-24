@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 from core.models import Ami, Instance, KeyPair, SecurityGroup, Subnet, Vpc
 from core.ports import CloudProviderPort
+from tools.ec2_launcher.models import LaunchConfig, LaunchResult
 
 logger = logging.getLogger(__name__)
 
@@ -189,3 +190,31 @@ class LauncherService:
         except Exception as exc:
             logger.error("Error scanning instances: %s", exc)
             raise
+
+    def launch_instances(self, config: LaunchConfig) -> LaunchResult:
+        """Delegate run_instances to the adapter; pure orchestration.
+
+        Single responsibility: translate the service-layer call into the
+        adapter-layer call and propagate any errors with context.
+        """
+        try:
+            return self.adapter.run_instances(self.region, config)
+        except Exception as exc:
+            logger.error("Error launching instances: %s", exc)
+            return LaunchResult(
+                instance_ids=[],
+                instance_names=[],
+                region=self.region,
+                error=str(exc),
+            )
+
+    def describe_instances_by_ids(self, instance_ids: List[str]) -> List[Instance]:
+        """Poll current state for a specific list of instance IDs.
+
+        Used by the LaunchMonitorDialog polling timer.
+        """
+        try:
+            return self.adapter.describe_instances(self.region, instance_ids=instance_ids)
+        except Exception as exc:
+            logger.error("Error polling instance state: %s", exc)
+            return []
