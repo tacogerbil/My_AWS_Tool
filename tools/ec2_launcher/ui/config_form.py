@@ -9,10 +9,10 @@ Section order
 -------------
 1. Instances  — count spinbox + pre-named instance rows
 2. Image       — tabbed AMI picker (Quick Start / My AMIs / Recents)
-3. Hardware    — instance type + info card + root volume
-4. Network     — VPC / Subnet with VPC color badges
-5. Security    — SG creator/browser + Key Pair
-6. Storage     — EBS volume list (root + additional)
+3. Hardware    — instance type + spec info card
+4. Storage     — EBS volume list (root + additional)
+5. Network     — VPC / Subnet with VPC color badges
+6. Security    — SG creator/browser + Key Pair
 7. Tags        — key/value table (collapsed by default)
 
 Public API
@@ -134,14 +134,14 @@ class ConfigForm(QScrollArea):
         self._sec_instances = self._wrap("Instances", self._instances)
         self._sec_image     = self._wrap("Image",     self._image)
         self._sec_hardware  = self._wrap("Hardware",  self._hardware)
+        self._sec_storage   = self._wrap("Storage",   self._storage)
         self._sec_network   = self._wrap("Network",   self._network)
         self._sec_security  = self._wrap("Security",  self._security)
-        self._sec_storage   = self._wrap("Storage",   self._storage)
         self._sec_tags      = self._wrap("Tags",      self._tags, collapsed=True)
 
         for sec in (
             self._sec_instances, self._sec_image, self._sec_hardware,
-            self._sec_network, self._sec_security, self._sec_storage,
+            self._sec_storage, self._sec_network, self._sec_security,
             self._sec_tags,
         ):
             layout.addWidget(sec)
@@ -175,9 +175,18 @@ class ConfigForm(QScrollArea):
         if patch.instance_type is not None:
             self._hardware.set_instance_type(patch.instance_type)
         if patch.volume_gb is not None or patch.volume_type is not None:
-            gb    = patch.volume_gb   or self._hardware.get_volume_gb() or 30
-            vtype = patch.volume_type or self._hardware.get_volume_type()
-            self._hardware.set_volume(gb, vtype)
+            # Grab current root vol to preserve whichever field wasn't patched
+            current_vols = self._storage.get_volumes()
+            root = current_vols[0] if current_vols else None
+            from tools.ec2_launcher.models import VolumeConfig
+            new_root = VolumeConfig(
+                device_name=root.device_name if root else "/dev/sda1",
+                size_gb=patch.volume_gb or (root.size_gb if root else 30),
+                volume_type=patch.volume_type or (root.volume_type if root else "gp3"),
+                delete_on_termination=root.delete_on_termination if root else True,
+                encrypted=root.encrypted if root else False,
+            )
+            self._storage.set_volumes([new_root] + (current_vols[1:] if current_vols else []))
         if patch.vpc_id is not None:
             self._network.set_vpc_id(patch.vpc_id)
         if patch.subnet_id is not None:
@@ -199,8 +208,12 @@ class ConfigForm(QScrollArea):
         if not image_id:
             errors["image"] = True
 
-        volume_gb = self._hardware.get_volume_gb()
-        if volume_gb is None:
+        # Volume settings come exclusively from StorageSection
+        volumes = self._storage.get_volumes()
+        root_vol = volumes[0] if volumes else None
+        volume_gb   = root_vol.size_gb   if root_vol else None
+        volume_type = root_vol.volume_type if root_vol else "gp3"
+        if not volume_gb:
             errors["hardware"] = True
 
         vpc_id = self._network.get_vpc_id()
@@ -222,7 +235,7 @@ class ConfigForm(QScrollArea):
 
         # Auto-expand sections that failed validation so errors are visible
         if errors["image"]:                        self._sec_image.expand()
-        if errors["hardware"]:                     self._sec_hardware.expand()
+        if errors["hardware"]:                     self._sec_storage.expand()
         if errors["vpc"] or errors["subnet"]:      self._sec_network.expand()
         if errors["key"]:                          self._sec_security.expand()
 
@@ -233,7 +246,7 @@ class ConfigForm(QScrollArea):
             image_id=image_id,
             instance_type=self._hardware.get_instance_type(),
             volume_gb=volume_gb,
-            volume_type=self._hardware.get_volume_type(),
+            volume_type=volume_type,
             vpc_id=vpc_id,
             subnet_id=subnet_id,
             sg_ids=self._security.get_sg_ids(),
@@ -241,7 +254,7 @@ class ConfigForm(QScrollArea):
             tags=self._tags.get_tags(),
             instance_count=self._instances.get_count(),
             instance_names=self._instances.get_instance_names(),
-            volumes=self._storage.get_volumes(),
+            volumes=volumes,
         )
 
     # ------------------------------------------------------------------

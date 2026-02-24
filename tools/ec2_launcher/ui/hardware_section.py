@@ -1,18 +1,14 @@
 """
-hardware_section.py — Instance type selector + root EBS volume config.
+hardware_section.py — Instance type selector + spec info card.
 
-The instance-type info card shows vCPU / RAM / network from a local lookup
-table so users can make an informed choice without a live DescribeInstanceTypes
-call.  The table covers the most common types; unknown types show a prompt to
-check the AWS documentation.
+Shows a searchable instance-type combo with an offline spec card
+(vCPU / RAM / network).  Root volume configuration has been moved
+exclusively to StorageSection to avoid conflicting settings.
 
 Public API (used by ConfigForm):
     populate(instance_types: List[str])
     get_instance_type() -> str
-    get_volume_gb() -> Optional[int]
-    get_volume_type() -> str
     set_instance_type(itype: str)
-    set_volume(gb: int, vtype: str)
     mark_error(has_error: bool)
 """
 
@@ -21,20 +17,17 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ui.common.widgets import SearchableComboBox
 
-_ERROR_STYLE = "border: 1px solid #e74c3c;"
+_ERROR_STYLE  = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
-_VOLUME_TYPES = ["gp3", "gp2", "io1", "io2", "st1", "sc1", "standard"]
 
 # (vCPU count, RAM, network) — offline reference; covers the most common types
 _INSTANCE_SPECS: Dict[str, Tuple[str, str, str]] = {
@@ -93,21 +86,6 @@ class HardwareSection(QWidget):
         type_row.addStretch()
         layout.addLayout(type_row)
 
-        # Row 2: root volume
-        vol_row = QHBoxLayout()
-        vol_row.setSpacing(8)
-        vol_row.addWidget(QLabel("Root volume (GiB):"))
-        self._vol_size = QLineEdit("30")
-        self._vol_size.setFixedWidth(80)
-        vol_row.addWidget(self._vol_size)
-        vol_row.addSpacing(16)
-        vol_row.addWidget(QLabel("Type:"))
-        self._vol_type = QComboBox()
-        self._vol_type.addItems(_VOLUME_TYPES)
-        vol_row.addWidget(self._vol_type)
-        vol_row.addStretch()
-        layout.addLayout(vol_row)
-
         self._type_combo.currentTextChanged.connect(self._update_card)
 
     # ------------------------------------------------------------------
@@ -121,15 +99,6 @@ class HardwareSection(QWidget):
     def get_instance_type(self) -> str:
         return self._type_combo.currentText()
 
-    def get_volume_gb(self) -> Optional[int]:
-        try:
-            return int(self._vol_size.text())
-        except ValueError:
-            return None
-
-    def get_volume_type(self) -> str:
-        return self._vol_type.currentText()
-
     def set_instance_type(self, itype: str) -> None:
         idx = self._type_combo.findText(itype)
         if idx >= 0:
@@ -137,14 +106,9 @@ class HardwareSection(QWidget):
         else:
             self._type_combo.setEditText(itype)
 
-    def set_volume(self, gb: int, vtype: str) -> None:
-        self._vol_size.setText(str(gb))
-        idx = self._vol_type.findText(vtype)
-        if idx >= 0:
-            self._vol_type.setCurrentIndex(idx)
-
     def mark_error(self, has_error: bool) -> None:
-        self._vol_size.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
+        """Highlight the instance-type combo on validation failure."""
+        self._type_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
 
     # ------------------------------------------------------------------
     # Private
