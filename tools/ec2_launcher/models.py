@@ -21,6 +21,8 @@ class VolumeConfig:
     encrypted: bool = False
     iops: Optional[int] = None
     throughput_mbps: Optional[int] = None
+    kms_key_id: Optional[str] = None
+    initialization_rate: str = "default"  # "default" | "maximum"
 
 
 @dataclass

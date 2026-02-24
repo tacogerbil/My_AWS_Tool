@@ -228,7 +228,7 @@ class SecuritySection(QWidget):
     def _build_panels(self) -> QHBoxLayout:
         panels = QHBoxLayout()
         panels.setSpacing(4)
-        panels.addWidget(self._build_new_sg_box(), stretch=3)
+        panels.addWidget(self._build_new_sg_box(), stretch=1)
         panels.addWidget(self._build_arrow_btn(), alignment=Qt.AlignVCenter)
         panels.addWidget(self._build_existing_sg_box(), stretch=2)
         return panels
@@ -269,7 +269,7 @@ class SecuritySection(QWidget):
         return btn
 
     def _build_existing_sg_box(self) -> QGroupBox:
-        box = QGroupBox("Select Existing SG")
+        box = QGroupBox("Select Existing Security Group")
         layout = QVBoxLayout(box)
 
         self._sg_combo = SearchableComboBox()

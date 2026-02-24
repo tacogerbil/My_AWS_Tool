@@ -68,9 +68,12 @@ class _VolumeRow(QFrame):
         outer.setSpacing(6)
         outer.addLayout(self._build_row1(config, removable))
         outer.addLayout(self._build_row2(config))
+        outer.addLayout(self._build_row3(config))
 
         self._vtype.currentTextChanged.connect(self._on_type_changed)
+        self._enc_chk.toggled.connect(self._on_encrypted_changed)
         self._on_type_changed(config.volume_type)
+        self._on_encrypted_changed(config.encrypted)
 
     # ------------------------------------------------------------------
     # Public API
@@ -84,14 +87,20 @@ class _VolumeRow(QFrame):
             size = 30
         iops = self._parse_int(self._iops.text()) if vtype in _IOPS_TYPES else None
         tp = self._parse_int(self._tp.text()) if vtype in _THROUGHPUT_TYPES else None
+        encrypted = self._enc_chk.isChecked()
+        kms_raw = self._kms_key.currentText().strip() if encrypted else None
+        kms_key_id = None if (not kms_raw or kms_raw == "aws/ebs (default)") else kms_raw
+        init_rate = "maximum" if self._init_rate.currentIndex() == 1 else "default"
         return VolumeConfig(
             device_name=self._device.text().strip() or "/dev/sda1",
             size_gb=size,
             volume_type=vtype,
             delete_on_termination=self._del_chk.isChecked(),
-            encrypted=self._enc_chk.isChecked(),
+            encrypted=encrypted,
             iops=iops,
             throughput_mbps=tp,
+            kms_key_id=kms_key_id,
+            initialization_rate=init_rate,
         )
 
     # ------------------------------------------------------------------
@@ -161,6 +170,38 @@ class _VolumeRow(QFrame):
 
         row.addStretch()
         return row
+
+    def _build_row3(self, config: VolumeConfig) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        self._kms_lbl = QLabel("KMS Key:")
+        self._kms_key = QComboBox()
+        self._kms_key.setEditable(True)
+        self._kms_key.addItem("aws/ebs (default)")
+        if config.kms_key_id:
+            self._kms_key.setCurrentText(config.kms_key_id)
+        self._kms_key.setMinimumWidth(200)
+        self._kms_key.setStyleSheet(_FIELD_STYLE)
+        row.addWidget(self._kms_lbl)
+        row.addWidget(self._kms_key)
+
+        row.addSpacing(16)
+
+        row.addWidget(QLabel("Initialization:"))
+        self._init_rate = QComboBox()
+        self._init_rate.addItems(["Default", "Maximum (full initialization)"])
+        self._init_rate.setStyleSheet(_FIELD_STYLE)
+        if config.initialization_rate == "maximum":
+            self._init_rate.setCurrentIndex(1)
+        row.addWidget(self._init_rate)
+
+        row.addStretch()
+        return row
+
+    def _on_encrypted_changed(self, checked: bool) -> None:
+        self._kms_lbl.setVisible(checked)
+        self._kms_key.setVisible(checked)
 
     def _on_type_changed(self, vtype: str) -> None:
         show_iops = vtype in _IOPS_TYPES
