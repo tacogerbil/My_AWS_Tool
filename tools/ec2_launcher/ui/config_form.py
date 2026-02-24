@@ -9,7 +9,7 @@ Sections
 1. Image     — AMI picker + "my imports" filter
 2. Hardware  — instance type, volume size/type
 3. Network   — VPC (+ badge), Subnet (+ badge, filtered by VPC)
-4. Security  — SG chips (checkable), key-pair picker
+4. Security  — New SG creator (left) | ← copy | Existing SG browser (right) + Key Pair
 5. Tags      — editable key/value table
 """
 
@@ -21,13 +21,12 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLabel, QLineEdit, QComboBox,
     QCheckBox, QTableWidget, QTableWidgetItem,
-    QPushButton, QHeaderView, QSizePolicy,
+    QPushButton, QHeaderView, QSizePolicy, QFrame,
 )
 from PySide6.QtCore import Qt
 
 from core.models import Ami, KeyPair, SecurityGroup, Subnet, Vpc
 from tools.ec2_launcher.models import LaunchConfig, SectionPatch
-from tools.ec2_launcher.ui.sg_chips import SgChipsWidget
 from tools.ec2_launcher.ui.vpc_badge import VpcBadge
 from ui.common.widgets import SearchableComboBox
 
@@ -35,9 +34,31 @@ _VOLUME_TYPES = ["gp3", "gp2", "io1", "io2", "st1", "sc1", "standard"]
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
+# Security group rule type → (protocol, port_range)
+_RULE_TYPE_MAP: Dict[str, tuple] = {
+    "SSH":          ("tcp",  "22"),
+    "HTTP":         ("tcp",  "80"),
+    "HTTPS":        ("tcp",  "443"),
+    "RDP":          ("tcp",  "3389"),
+    "SMTP":         ("tcp",  "25"),
+    "MySQL/Aurora": ("tcp",  "3306"),
+    "PostgreSQL":   ("tcp",  "5432"),
+    "MSSQL":        ("tcp",  "1433"),
+    "All TCP":      ("tcp",  "0-65535"),
+    "All UDP":      ("udp",  "0-65535"),
+    "All Traffic":  ("all",  "All"),
+    "Custom TCP":   ("tcp",  ""),
+    "Custom UDP":   ("udp",  ""),
+    "Custom ICMP":  ("icmp", ""),
+}
+
+
+# ---------------------------------------------------------------------------
+# Section 1 — Image
+# ---------------------------------------------------------------------------
 
 class _ImageSection(QGroupBox):
-    """Section 1: AMI selection."""
+    """AMI selection with optional import filter."""
 
     def __init__(self, parent=None) -> None:
         super().__init__("Image", parent)
@@ -47,7 +68,6 @@ class _ImageSection(QGroupBox):
         layout.addWidget(self._imports_only)
 
         self._ami_combo = SearchableComboBox()
-        self._ami_combo.setMinimumWidth(420)
         layout.addWidget(self._ami_combo)
 
         self._all_amis: List[Ami] = []
@@ -83,8 +103,12 @@ class _ImageSection(QGroupBox):
         self._ami_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
 
 
+# ---------------------------------------------------------------------------
+# Section 2 — Hardware
+# ---------------------------------------------------------------------------
+
 class _HardwareSection(QGroupBox):
-    """Section 2: Instance type + volume."""
+    """Instance type and root volume configuration."""
 
     def __init__(self, parent=None) -> None:
         super().__init__("Hardware", parent)
@@ -144,8 +168,12 @@ class _HardwareSection(QGroupBox):
         self._vol_size.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
 
 
+# ---------------------------------------------------------------------------
+# Section 3 — Network
+# ---------------------------------------------------------------------------
+
 class _NetworkSection(QGroupBox):
-    """Section 3: VPC + Subnet, each with a color badge."""
+    """VPC and Subnet selection, each with a color badge."""
 
     def __init__(self, parent=None) -> None:
         super().__init__("Network", parent)
@@ -180,8 +208,9 @@ class _NetworkSection(QGroupBox):
         self._vpc_combo.clear()
         for vpc in vpcs:
             label = vpc.name or vpc.vpc_id
-            display = f"{vpc.vpc_id}  {label}  {vpc.cidr_block}"
-            self._vpc_combo.addItem(display, userData=vpc.vpc_id)
+            self._vpc_combo.addItem(
+                f"{vpc.vpc_id}  {label}  {vpc.cidr_block}", userData=vpc.vpc_id
+            )
         self._vpc_combo.blockSignals(False)
         self._on_vpc_changed()
 
@@ -195,9 +224,10 @@ class _NetworkSection(QGroupBox):
         subs = [s for s in self._all_subnets if not vpc_id or s.vpc_id == vpc_id]
         for sub in subs:
             label = sub.name or sub.subnet_id
-            display = f"{sub.subnet_id}  {label}  {sub.cidr_block}  {sub.availability_zone}"
-            self._subnet_combo.addItem(display, userData=sub.subnet_id)
-        # Badge follows the same VPC color
+            self._subnet_combo.addItem(
+                f"{sub.subnet_id}  {label}  {sub.cidr_block}  {sub.availability_zone}",
+                userData=sub.subnet_id,
+            )
         self._subnet_badge.set_vpc(vpc_id)
 
     def get_vpc_id(self) -> Optional[str]:
@@ -221,39 +251,224 @@ class _NetworkSection(QGroupBox):
         self._subnet_combo.setStyleSheet(_ERROR_STYLE if subnet_error else _NORMAL_STYLE)
 
 
+# ---------------------------------------------------------------------------
+# Section 4 — Security (SG creator + browser + Key Pair)
+# ---------------------------------------------------------------------------
+
+class _SgRulesTable(QWidget):
+    """Editable inbound-rules table for a new security group definition."""
+
+    _COLUMNS = ["Type", "Protocol", "Port Range", "Source", "Description"]
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(self._COLUMNS)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Type
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Protocol
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Port
+        hdr.setSectionResizeMode(3, QHeaderView.Stretch)           # Source
+        hdr.setSectionResizeMode(4, QHeaderView.Stretch)           # Description
+        self._table.setMinimumHeight(110)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add Rule")
+        add_btn.setFixedWidth(80)
+        rm_btn = QPushButton("Remove")
+        rm_btn.setFixedWidth(80)
+        add_btn.clicked.connect(lambda: self._add_rule())
+        rm_btn.clicked.connect(self._remove_rule)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(rm_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+    # ------------------------------------------------------------------
+    def _add_rule(
+        self,
+        type_: str = "Custom TCP",
+        port: str = "",
+        source: str = "0.0.0.0/0",
+        desc: str = "",
+    ) -> None:
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        type_combo = QComboBox()
+        type_combo.addItems(list(_RULE_TYPE_MAP.keys()))
+        idx = type_combo.findText(type_)
+        if idx >= 0:
+            type_combo.setCurrentIndex(idx)
+        type_combo.currentTextChanged.connect(self._on_type_changed)
+        self._table.setCellWidget(row, 0, type_combo)
+
+        proto, auto_port = _RULE_TYPE_MAP.get(type_, ("tcp", ""))
+        proto_item = QTableWidgetItem(proto)
+        proto_item.setFlags(Qt.ItemIsEnabled)
+        self._table.setItem(row, 1, proto_item)
+
+        fill_port = port if port else (auto_port if not type_.startswith("Custom") else "")
+        self._table.setItem(row, 2, QTableWidgetItem(fill_port))
+        self._table.setItem(row, 3, QTableWidgetItem(source))
+        self._table.setItem(row, 4, QTableWidgetItem(desc))
+
+    def _on_type_changed(self, type_: str) -> None:
+        sender = self.sender()
+        for row in range(self._table.rowCount()):
+            if self._table.cellWidget(row, 0) is sender:
+                proto, port = _RULE_TYPE_MAP.get(type_, ("tcp", ""))
+                item1 = self._table.item(row, 1)
+                if item1:
+                    item1.setText(proto)
+                else:
+                    pi = QTableWidgetItem(proto)
+                    pi.setFlags(Qt.ItemIsEnabled)
+                    self._table.setItem(row, 1, pi)
+                if not type_.startswith("Custom"):
+                    item2 = self._table.item(row, 2)
+                    if item2:
+                        item2.setText(port)
+                    else:
+                        self._table.setItem(row, 2, QTableWidgetItem(port))
+                break
+
+    def _remove_rule(self) -> None:
+        row = self._table.currentRow()
+        if row >= 0:
+            self._table.removeRow(row)
+
+    def clear_rules(self) -> None:
+        self._table.setRowCount(0)
+
+
 class _SecuritySection(QGroupBox):
-    """Section 4: SG chips + Key Pair."""
+    """Section 4: side-by-side New SG creator and Existing SG browser."""
 
     def __init__(self, parent=None) -> None:
         super().__init__("Security", parent)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Security Groups (click to select):"))
-        self._sg_chips = SgChipsWidget(checkable=True)
-        layout.addWidget(self._sg_chips)
+        panels = QHBoxLayout()
+        panels.setSpacing(4)
 
+        # --- Left: New SG creator ---
+        new_box = QGroupBox("New Security Group")
+        new_layout = QVBoxLayout(new_box)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Name:"))
+        self._new_name = QLineEdit()
+        name_row.addWidget(self._new_name)
+        new_layout.addLayout(name_row)
+
+        desc_row = QHBoxLayout()
+        desc_row.addWidget(QLabel("Description:"))
+        self._new_desc = QLineEdit()
+        desc_row.addWidget(self._new_desc)
+        new_layout.addLayout(desc_row)
+
+        new_layout.addWidget(QLabel("Inbound Rules:"))
+        self._rules_table = _SgRulesTable()
+        new_layout.addWidget(self._rules_table)
+
+        # --- Center: copy arrow ---
+        arrow_btn = QPushButton("←")
+        arrow_btn.setFixedSize(34, 34)
+        arrow_btn.setToolTip("Copy selected SG settings into New SG form")
+        arrow_btn.setStyleSheet(
+            "QPushButton { font-size: 16px; background-color: #3498db; "
+            "color: white; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #2980b9; }"
+        )
+        arrow_btn.clicked.connect(self._on_copy)
+
+        # --- Right: Existing SG browser ---
+        exist_box = QGroupBox("Select Existing SG")
+        exist_layout = QVBoxLayout(exist_box)
+        self._sg_combo = SearchableComboBox()
+        exist_layout.addWidget(self._sg_combo)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #bdc3c7;")
+        exist_layout.addWidget(sep)
+
+        self._sg_info = QLabel("")
+        self._sg_info.setWordWrap(True)
+        self._sg_info.setStyleSheet("color: #555; font-size: 11px; padding: 4px;")
+        exist_layout.addWidget(self._sg_info)
+        exist_layout.addStretch()
+
+        self._sg_combo.currentIndexChanged.connect(self._on_sg_selected)
+
+        panels.addWidget(new_box, stretch=3)
+        panels.addWidget(arrow_btn, alignment=Qt.AlignVCenter)
+        panels.addWidget(exist_box, stretch=2)
+        outer.addLayout(panels)
+
+        # --- Key Pair (below both panels) ---
         kp_row = QHBoxLayout()
         kp_row.addWidget(QLabel("Key Pair:"))
         self._kp_combo = SearchableComboBox()
-        self._kp_combo.setMinimumWidth(240)
+        self._kp_combo.setMinimumWidth(220)
         kp_row.addWidget(self._kp_combo)
         kp_row.addStretch()
-        layout.addLayout(kp_row)
+        outer.addLayout(kp_row)
 
+        self._all_sgs: List[SecurityGroup] = []
+
+    # ------------------------------------------------------------------
     def populate(self, sgs: List[SecurityGroup], key_pairs: List[KeyPair]) -> None:
-        self._sg_chips.set_groups(sgs)
+        self._all_sgs = sgs
+        self._sg_combo.clear()
+        for sg in sgs:
+            self._sg_combo.addItem(
+                f"{sg.group_name}  ({sg.group_id})", userData=sg.group_id
+            )
         self._kp_combo.clear()
         for kp in key_pairs:
             self._kp_combo.addItem(kp.key_name, userData=kp.key_name)
 
+    def _on_sg_selected(self) -> None:
+        sg_id = self._sg_combo.currentData()
+        sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
+        if sg:
+            self._sg_info.setText(
+                f"<b>{sg.group_name}</b><br>"
+                f"ID: {sg.group_id}<br>"
+                f"VPC: {sg.vpc_id}<br>"
+                f"{sg.description}"
+            )
+        else:
+            self._sg_info.setText("")
+
+    def _on_copy(self) -> None:
+        """Copy existing SG name/description into the New SG form as a template."""
+        sg_id = self._sg_combo.currentData()
+        sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
+        if not sg:
+            return
+        self._new_name.setText(f"copy-of-{sg.group_name}")
+        self._new_desc.setText(sg.description)
+
     def get_sg_ids(self) -> List[str]:
-        return self._sg_chips.get_selected_ids()
+        """Return the selected existing SG ID (single select)."""
+        sg_id = self._sg_combo.currentData()
+        return [sg_id] if sg_id else []
 
     def get_key_name(self) -> Optional[str]:
         return self._kp_combo.currentText() or None
 
     def set_sg_ids(self, ids: List[str]) -> None:
-        self._sg_chips.set_selected_ids(ids)
+        if ids:
+            idx = self._sg_combo.findData(ids[0])
+            if idx >= 0:
+                self._sg_combo.setCurrentIndex(idx)
 
     def set_key_name(self, name: str) -> None:
         idx = self._kp_combo.findText(name)
@@ -263,12 +478,15 @@ class _SecuritySection(QGroupBox):
             self._kp_combo.setEditText(name)
 
     def mark_error(self, has_error: bool) -> None:
-        style = _ERROR_STYLE if has_error else _NORMAL_STYLE
-        self._kp_combo.setStyleSheet(style)
+        self._kp_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
 
+
+# ---------------------------------------------------------------------------
+# Section 5 — Tags
+# ---------------------------------------------------------------------------
 
 class _TagsSection(QGroupBox):
-    """Section 5: Editable key/value tag table."""
+    """Editable key/value tag table."""
 
     def __init__(self, parent=None) -> None:
         super().__init__("Tags", parent)
@@ -276,7 +494,10 @@ class _TagsSection(QGroupBox):
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["Key", "Value"])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        self._table.setColumnWidth(0, 160)
         self._table.setMinimumHeight(100)
         self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self._table)
@@ -286,7 +507,7 @@ class _TagsSection(QGroupBox):
         btn_add.setFixedWidth(90)
         btn_remove = QPushButton("Remove Row")
         btn_remove.setFixedWidth(100)
-        btn_add.clicked.connect(self._add_row)
+        btn_add.clicked.connect(lambda: self._add_row())
         btn_remove.clicked.connect(self._remove_row)
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_remove)
@@ -298,8 +519,8 @@ class _TagsSection(QGroupBox):
         for row in range(self._table.rowCount()):
             key_item = self._table.item(row, 0)
             val_item = self._table.item(row, 1)
-            key = (key_item.text().strip() if key_item else "")
-            val = (val_item.text().strip() if val_item else "")
+            key = key_item.text().strip() if key_item else ""
+            val = val_item.text().strip() if val_item else ""
             if key:
                 tags[key] = val
         return tags
@@ -321,6 +542,10 @@ class _TagsSection(QGroupBox):
             self._table.removeRow(selected)
 
 
+# ---------------------------------------------------------------------------
+# ConfigForm — public composition
+# ---------------------------------------------------------------------------
+
 class ConfigForm(QScrollArea):
     """Unified scrollable form for all EC2 launch parameters.
 
@@ -331,12 +556,13 @@ class ConfigForm(QScrollArea):
     apply_patch(patch: SectionPatch)
         Update only the fields in patch that are not None.
     get_launch_config() -> Optional[LaunchConfig]
-        Validate and return; returns None and shows inline errors if incomplete.
+        Validate and return; returns None on validation failure.
     """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         container = QWidget()
         self.setWidget(container)
@@ -369,14 +595,12 @@ class ConfigForm(QScrollArea):
         sgs: List[SecurityGroup],
         key_pairs: List[KeyPair],
     ) -> None:
-        """Populate all section pickers with the supplied data."""
         self._image.populate(amis)
         self._hardware.populate(instance_types)
         self._network.populate(vpcs, subnets)
         self._security.populate(sgs, key_pairs)
 
     def apply_patch(self, patch: SectionPatch) -> None:
-        """Apply non-None fields from patch into the form."""
         if patch.image_id is not None:
             self._image.set_image_id(patch.image_id)
         if patch.instance_type is not None:
@@ -397,14 +621,7 @@ class ConfigForm(QScrollArea):
             self._tags.set_tags(patch.tags)
 
     def get_launch_config(self) -> Optional[LaunchConfig]:
-        """Validate form and return LaunchConfig, or None on validation failure."""
-        errors: Dict[str, bool] = {
-            "image": False,
-            "hardware": False,
-            "vpc": False,
-            "subnet": False,
-            "key": False,
-        }
+        errors = dict(image=False, hardware=False, vpc=False, subnet=False, key=False)
 
         image_id = self._image.get_image_id()
         if not image_id:
