@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt
 from tools.ec2_launcher.models import SectionPatch
 from tools.ec2_launcher.ui.config_form import ConfigForm
 from tools.ec2_launcher.ui.reference_panel import ReferencePanel
+from ui.common.styles import get_checkbox_style
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,10 @@ class LauncherWindow(QWidget):
         self._service = service
         self.setWindowTitle("EC2 Launcher")
         self.resize(1300, 800)
+
+        # Apply checkbox style at the root level so every QCheckBox in the
+        # entire window (ConfigForm, ReferencePanel, dialogs) is covered.
+        self.setStyleSheet(get_checkbox_style())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

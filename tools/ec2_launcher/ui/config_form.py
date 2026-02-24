@@ -50,13 +50,13 @@ def _build_form_style() -> str:
     return """
     QLineEdit, QComboBox {
         border: 1px solid #ced4da; border-radius: 4px;
-        padding: 5px 10px; min-height: 28px; margin-top: 1px;
+        padding: 5px 10px; min-height: 28px;
         background: white; color: #2c3e50; font-size: 13px;
     }
     QLineEdit:focus, QComboBox:focus { border-color: #3498db; }
     QSpinBox {
         border: 1px solid #ced4da; border-radius: 4px;
-        padding: 5px 4px 5px 10px; min-height: 28px; margin-top: 1px;
+        padding: 5px 4px 5px 10px; min-height: 28px;
         background: white; color: #2c3e50; font-size: 13px;
     }
     QSpinBox:focus { border-color: #3498db; }
@@ -78,7 +78,7 @@ def _build_form_style() -> str:
     QSpinBox::down-button:pressed { background: #bdc3c7; }
     QLabel { color: #34495e; font-size: 13px; }
     QPushButton {
-        border-radius: 4px; padding: 5px 12px; font-size: 12px; margin-top: 1px;
+        border-radius: 4px; padding: 5px 12px; font-size: 12px;
         background-color: #ecf0f1; color: #2c3e50; border: 1px solid #ced4da;
     }
     QPushButton:hover   { background-color: #d5d8dc; }

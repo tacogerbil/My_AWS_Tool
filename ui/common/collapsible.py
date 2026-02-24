@@ -53,13 +53,20 @@ def _header_style(bottom_round: bool) -> str:
     """
 
 
-_BODY_STYLE = (
-    "background-color: #ffffff;"
-    "border: 1px solid #d5d8dc;"
-    "border-top: none;"
-    "border-bottom-left-radius: 6px;"
-    "border-bottom-right-radius: 6px;"
-)
+# IMPORTANT: Use the #objectName selector so this style ONLY applies to the
+# body widget itself.  A bare "QWidget { ... }" selector would cascade to all
+# descendant QWidget children (QLineEdit, QComboBox, QCheckBox …) and strip
+# their top borders via the "border-top: none" rule.
+_BODY_OBJ_NAME = "_collapsibleBody"
+_BODY_STYLE = f"""
+    #{_BODY_OBJ_NAME} {{
+        background-color: #ffffff;
+        border: 1px solid #d5d8dc;
+        border-top: none;
+        border-bottom-left-radius: 6px;
+        border-bottom-right-radius: 6px;
+    }}
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +109,7 @@ class CollapsibleSection(QWidget):
 
         # Body (content area)
         self._body = QWidget()
+        self._body.setObjectName(_BODY_OBJ_NAME)
         self._body.setStyleSheet(_BODY_STYLE)
         body_inner = QVBoxLayout(self._body)
         body_inner.setContentsMargins(12, 10, 12, 10)

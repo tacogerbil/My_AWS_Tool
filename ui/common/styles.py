@@ -14,7 +14,6 @@ def get_checkbox_style() -> str:
     QCheckBox {{
         spacing: 8px;
         color: #34495e;
-        font-size: 13px;
     }}
     QCheckBox::indicator {{
         width: 16px;
