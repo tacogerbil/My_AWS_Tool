@@ -71,7 +71,9 @@ class AmiSection(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._all_amis: List[Ami] = []
+        self._quick_start_amis: List[Ami] = []
+        self._my_amis: List[Ami] = []
+        self._all_amis: List[Ami] = []   # combined; used for detail card + set_image_id
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -90,8 +92,17 @@ class AmiSection(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def populate(self, amis: List[Ami]) -> None:
-        self._all_amis = amis
+    def populate(
+        self, quick_start_amis: List[Ami], my_amis: List[Ami]
+    ) -> None:
+        """Load Quick Start (AWS-provided) and My AMIs (account-owned) separately."""
+        self._quick_start_amis = quick_start_amis
+        self._my_amis = my_amis
+        # Combined unique set — used by detail card, Recents, and set_image_id
+        seen: dict = {}
+        for ami in (quick_start_amis + my_amis):
+            seen.setdefault(ami.image_id, ami)
+        self._all_amis = list(seen.values())
         self._refresh_quick_start()
         self._refresh_my_amis()
         self._refresh_recents()
@@ -207,7 +218,7 @@ class AmiSection(QWidget):
         keywords = _OS_FILTERS.get(btn.text() if btn else "All", [])
         self._qs_combo.blockSignals(True)
         self._qs_combo.clear()
-        for ami in self._all_amis:
+        for ami in self._quick_start_amis:
             if not keywords or any(k in ami.name.lower() for k in keywords):
                 self._qs_combo.addItem(
                     f"{ami.name}  ({ami.image_id})", userData=ami.image_id
@@ -219,7 +230,7 @@ class AmiSection(QWidget):
         shared = hasattr(self, "_shared_radio") and self._shared_radio.isChecked()
         self._my_combo.blockSignals(True)
         self._my_combo.clear()
-        for ami in self._all_amis:
+        for ami in self._my_amis:
             is_imported = any(t.key == "CreatedBy" for t in ami.tags)
             if shared and not is_imported:
                 continue

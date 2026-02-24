@@ -110,7 +110,8 @@ class LauncherWindow(QWidget):
             self._load_mock_data()
             return
         try:
-            amis = self._service.list_my_amis()
+            my_amis = self._service.list_my_amis()
+            quick_start_amis = self._service.list_quick_start_amis()
             instance_types = self._service.list_instance_types()
             vpcs = self._service.list_vpcs()
             subnets = self._service.list_subnets()
@@ -118,7 +119,9 @@ class LauncherWindow(QWidget):
             key_pairs = self._service.list_key_pairs()
             instances = self._service.list_instances_for_cloning()
 
-            self._config_form.set_data(amis, instance_types, vpcs, subnets, sgs, key_pairs)
+            self._config_form.set_data(
+                my_amis, quick_start_amis, instance_types, vpcs, subnets, sgs, key_pairs
+            )
             self._reference_panel.set_instances(instances)
         except Exception as exc:
             logger.error("Failed to load AWS data: %s", exc)
@@ -203,7 +206,30 @@ class LauncherWindow(QWidget):
             ),
         ]
 
-        self._config_form.set_data(amis, MOCK_INSTANCE_TYPES, vpcs, subnets, sgs, key_pairs)
+        # Quick Start = standard AWS-provided images; My AMIs = account imports
+        quick_start_amis = [
+            Ami(image_id="ami-qs-amzn2023",  name="Amazon Linux 2023",
+                description="Amazon Linux 2023 Kernel 6.1", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-ubuntu2204", name="Ubuntu Server 22.04 LTS",
+                description="Canonical, Ubuntu, 22.04 LTS, amd64 jammy image", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-ubuntu2004", name="Ubuntu Server 20.04 LTS",
+                description="Canonical, Ubuntu, 20.04 LTS, amd64 focal image", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-win2022",   name="Windows Server 2022 Base",
+                description="Microsoft Windows Server 2022 Full Locale English", platform="Windows"),
+            Ami(image_id="ami-qs-win2019",   name="Windows Server 2019 Base",
+                description="Microsoft Windows Server 2019 Full Locale English", platform="Windows"),
+            Ami(image_id="ami-qs-rhel9",     name="Red Hat Enterprise Linux 9",
+                description="RHEL 9 (HVM), SSD Volume Type", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-suse15",    name="SUSE Linux Enterprise Server 15 SP5",
+                description="SUSE Linux Enterprise Server 15 SP5", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-debian12",  name="Debian 12 (Bookworm)",
+                description="Debian 12 (Bookworm) amd64", platform="Linux/UNIX"),
+            Ami(image_id="ami-qs-macos13",   name="macOS Ventura 13",
+                description="macOS 13 Ventura", platform="macOS"),
+        ]
+        self._config_form.set_data(
+            amis, quick_start_amis, MOCK_INSTANCE_TYPES, vpcs, subnets, sgs, key_pairs
+        )
         self._reference_panel.set_instances(mock_instances)
 
     # ------------------------------------------------------------------

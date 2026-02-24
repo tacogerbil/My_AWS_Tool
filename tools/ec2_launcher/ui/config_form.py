@@ -147,7 +147,8 @@ class ConfigForm(QScrollArea):
 
     def set_data(
         self,
-        amis: List[Ami],
+        my_amis: List[Ami],
+        quick_start_amis: List[Ami],
         instance_types: List[str],
         vpcs: List[Vpc],
         subnets: List[Subnet],
@@ -155,7 +156,7 @@ class ConfigForm(QScrollArea):
         key_pairs: List[KeyPair],
     ) -> None:
         """Populate all section pickers from injected data."""
-        self._image.populate(amis)
+        self._image.populate(quick_start_amis=quick_start_amis, my_amis=my_amis)
         self._hardware.populate(instance_types)
         self._network.populate(vpcs, subnets)
         self._security.populate(sgs, key_pairs)
