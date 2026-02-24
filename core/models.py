@@ -30,6 +30,15 @@ class Subnet:
     name: Optional[str] = None
 
 @dataclass
+class InboundRule:
+    """One inbound permission entry in a Security Group."""
+    protocol: str    # "tcp", "udp", "icmp", "all"
+    port_range: str  # "22", "0-65535", "All", ""
+    cidr: str        # "0.0.0.0/0", "::/0"
+    description: str = ""
+
+
+@dataclass
 class SecurityGroup:
     """Represents an AWS Security Group."""
     group_id: str
@@ -37,6 +46,7 @@ class SecurityGroup:
     description: str
     vpc_id: str
     tags: List[Tag] = field(default_factory=list)
+    inbound_rules: List["InboundRule"] = field(default_factory=list)
 
 @dataclass
 class Instance:

@@ -32,14 +32,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from core.models import KeyPair, SecurityGroup
+from core.models import InboundRule, KeyPair, SecurityGroup
 from tools.ec2_launcher.ui.key_pair_dialog import CreateKeyPairDialog
+from ui.common.ui_prefs import get_pref, set_pref
 from ui.common.widgets import SearchableComboBox
 
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
@@ -62,6 +64,21 @@ _RULE_TYPE_MAP: Dict[str, tuple] = {
     "Custom UDP":   ("udp",  ""),
     "Custom ICMP":  ("icmp", ""),
 }
+
+
+def _type_from_rule(protocol: str, port_range: str) -> str:
+    """Reverse-lookup the named rule type for a given protocol + port range."""
+    for name, (proto, port) in _RULE_TYPE_MAP.items():
+        if name.startswith("Custom"):
+            continue
+        if proto == protocol and port == port_range:
+            return name
+    # Fallback to appropriate Custom type
+    if protocol == "udp":
+        return "Custom UDP"
+    if protocol == "icmp":
+        return "Custom ICMP"
+    return "Custom TCP"
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +178,13 @@ class _SgRulesTable(QWidget):
     def clear_rules(self) -> None:
         self._table.setRowCount(0)
 
+    def populate_from_rules(self, rules: List[InboundRule]) -> None:
+        self.clear_rules()
+        for rule in rules:
+            type_ = _type_from_rule(rule.protocol, rule.port_range)
+            self._add_rule(type_=type_, port=rule.port_range,
+                           source=rule.cidr, desc=rule.description)
+
 
 # ---------------------------------------------------------------------------
 # SecuritySection — public widget
@@ -179,8 +203,13 @@ class SecuritySection(QWidget):
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
-        outer.addLayout(self._build_panels())
+        outer.addWidget(self._build_panels())
         outer.addLayout(self._build_keypair_row())
+
+        # Restore saved splitter ratio
+        saved = get_pref("security_splitter_sizes")
+        if saved and len(saved) == 2:
+            self._splitter.setSizes(saved)
 
     # ------------------------------------------------------------------
     # Public API
@@ -225,13 +254,14 @@ class SecuritySection(QWidget):
     # Private — UI construction
     # ------------------------------------------------------------------
 
-    def _build_panels(self) -> QHBoxLayout:
-        panels = QHBoxLayout()
-        panels.setSpacing(4)
-        panels.addWidget(self._build_new_sg_box(), stretch=1)
-        panels.addWidget(self._build_arrow_btn(), alignment=Qt.AlignVCenter)
-        panels.addWidget(self._build_existing_sg_box(), stretch=2)
-        return panels
+    def _build_panels(self) -> QSplitter:
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.addWidget(self._build_new_sg_box())
+        self._splitter.addWidget(self._build_existing_sg_box())
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 2)
+        self._splitter.splitterMoved.connect(self._on_splitter_moved)
+        return self._splitter
 
     def _build_new_sg_box(self) -> QGroupBox:
         box = QGroupBox("New Security Group")
@@ -272,8 +302,12 @@ class SecuritySection(QWidget):
         box = QGroupBox("Select Existing Security Group")
         layout = QVBoxLayout(box)
 
+        combo_row = QHBoxLayout()
+        combo_row.setSpacing(6)
+        combo_row.addWidget(self._build_arrow_btn())
         self._sg_combo = SearchableComboBox()
-        layout.addWidget(self._sg_combo)
+        combo_row.addWidget(self._sg_combo)
+        layout.addLayout(combo_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -311,6 +345,9 @@ class SecuritySection(QWidget):
     # Private — slots
     # ------------------------------------------------------------------
 
+    def _on_splitter_moved(self, pos: int, index: int) -> None:
+        set_pref("security_splitter_sizes", self._splitter.sizes())
+
     def _on_sg_selected(self) -> None:
         sg_id = self._sg_combo.currentData()
         sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
@@ -331,6 +368,7 @@ class SecuritySection(QWidget):
         if sg:
             self._new_name.setText(f"copy-of-{sg.group_name}")
             self._new_desc.setText(sg.description)
+            self._rules_table.populate_from_rules(sg.inbound_rules)
 
     def _on_create_key_pair(self) -> None:
         dlg = CreateKeyPairDialog(self)

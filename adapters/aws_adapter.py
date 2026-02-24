@@ -2,11 +2,38 @@ import boto3
 import logging
 from typing import List, Optional, Dict
 from botocore.exceptions import ClientError, BotoCoreError
-from core.models import Vpc, Subnet, SecurityGroup, Instance, Tag, Ami, KeyPair
+from core.models import Vpc, Subnet, SecurityGroup, InboundRule, Instance, Tag, Ami, KeyPair
 from core.ports import CloudProviderPort
 
 # MCCC: Explicit Logging Configuration
 logger = logging.getLogger(__name__)
+
+
+def _fmt_port_range(protocol: str, from_port: Optional[int], to_port: Optional[int]) -> str:
+    if protocol == "all" or (from_port == -1 and to_port == -1):
+        return "All"
+    if from_port is None or to_port is None:
+        return ""
+    if from_port == to_port:
+        return str(from_port)
+    return f"{from_port}-{to_port}"
+
+
+def _parse_inbound_rules(permissions: List[Dict]) -> List[InboundRule]:
+    rules: List[InboundRule] = []
+    for perm in permissions:
+        raw_proto = perm.get("IpProtocol", "-1")
+        protocol = "all" if raw_proto == "-1" else raw_proto
+        port_range = _fmt_port_range(protocol, perm.get("FromPort"), perm.get("ToPort"))
+        for ip in perm.get("IpRanges", []):
+            rules.append(InboundRule(protocol=protocol, port_range=port_range,
+                                     cidr=ip.get("CidrIp", "0.0.0.0/0"),
+                                     description=ip.get("Description", "")))
+        for ip6 in perm.get("Ipv6Ranges", []):
+            rules.append(InboundRule(protocol=protocol, port_range=port_range,
+                                     cidr=ip6.get("CidrIpv6", "::/0"),
+                                     description=ip6.get("Description", "")))
+    return rules
 
 class AwsAdapter(CloudProviderPort):
     """
@@ -101,7 +128,8 @@ class AwsAdapter(CloudProviderPort):
                     group_name=item["GroupName"],
                     description=item.get("Description", ""),
                     vpc_id=item.get("VpcId", ""),
-                    tags=tags
+                    tags=tags,
+                    inbound_rules=_parse_inbound_rules(item.get("IpPermissions", [])),
                 ))
             return sgs
         except (ClientError, BotoCoreError) as e:
