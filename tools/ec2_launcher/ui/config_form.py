@@ -30,6 +30,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from core.models import Ami, KeyPair, SecurityGroup, Subnet, Vpc
+from ui.common.styles import get_checkbox_style
 from tools.ec2_launcher.models import LaunchConfig, SectionPatch
 from tools.ec2_launcher.ui.ami_section import AmiSection
 from tools.ec2_launcher.ui.hardware_section import HardwareSection
@@ -42,16 +43,20 @@ from ui.common.collapsible import CollapsibleSection
 
 # QSpinBox sub-controls must be explicitly defined when any stylesheet is set,
 # otherwise Qt zeroes out the button geometry and the arrows become unclickable.
-_FORM_STYLE = """
+#
+# margin-top: 1px on inputs/buttons prevents the top border from being clipped
+# by the layout cell edge — a known Qt/Linux stylesheet rendering quirk.
+def _build_form_style() -> str:
+    return """
     QLineEdit, QComboBox {
         border: 1px solid #ced4da; border-radius: 4px;
-        padding: 5px 10px; min-height: 28px;
+        padding: 5px 10px; min-height: 28px; margin-top: 1px;
         background: white; color: #2c3e50; font-size: 13px;
     }
     QLineEdit:focus, QComboBox:focus { border-color: #3498db; }
     QSpinBox {
         border: 1px solid #ced4da; border-radius: 4px;
-        padding: 5px 4px 5px 10px; min-height: 28px;
+        padding: 5px 4px 5px 10px; min-height: 28px; margin-top: 1px;
         background: white; color: #2c3e50; font-size: 13px;
     }
     QSpinBox:focus { border-color: #3498db; }
@@ -73,7 +78,7 @@ _FORM_STYLE = """
     QSpinBox::down-button:pressed { background: #bdc3c7; }
     QLabel { color: #34495e; font-size: 13px; }
     QPushButton {
-        border-radius: 4px; padding: 5px 12px; font-size: 12px;
+        border-radius: 4px; padding: 5px 12px; font-size: 12px; margin-top: 1px;
         background-color: #ecf0f1; color: #2c3e50; border: 1px solid #ced4da;
     }
     QPushButton:hover   { background-color: #d5d8dc; }
@@ -94,7 +99,9 @@ _FORM_STYLE = """
         border-right: 1px solid #d5d8dc; border-bottom: 1px solid #d5d8dc;
         padding: 4px 8px; font-weight: bold; color: #2c3e50; font-size: 12px;
     }
-"""
+""" + get_checkbox_style()
+
+_FORM_STYLE = _build_form_style()
 
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""

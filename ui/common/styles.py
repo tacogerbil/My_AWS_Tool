@@ -1,3 +1,47 @@
+import os as _os
+
+_ICONS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "icons")
+
+
+def get_checkbox_style() -> str:
+    """Return QSS for clearly visible, blue-checked QCheckBox indicators.
+
+    Uses an absolute path to the bundled SVG so the stylesheet works
+    regardless of the process working directory.
+    """
+    icon = _os.path.join(_ICONS_DIR, "check_white.svg").replace("\\", "/")
+    return f"""
+    QCheckBox {{
+        spacing: 8px;
+        color: #34495e;
+        font-size: 13px;
+    }}
+    QCheckBox::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 2px solid #adb5bd;
+        border-radius: 3px;
+        background: white;
+    }}
+    QCheckBox::indicator:hover {{
+        border-color: #3498db;
+        background: #f0f8ff;
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: #2980b9;
+        border-color: #1a6ea3;
+        image: url({icon});
+    }}
+    QCheckBox::indicator:checked:hover {{
+        background-color: #3498db;
+        border-color: #2980b9;
+    }}
+    QCheckBox::indicator:disabled {{
+        background: #ecf0f1;
+        border-color: #ced4da;
+    }}
+    """
+
 
 def interpolate_color(val, min_val, max_val, start_color, end_color):
     """Interpolates between two RGB tuples."""

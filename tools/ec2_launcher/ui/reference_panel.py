@@ -26,6 +26,7 @@ from core.models import Instance, SecurityGroup
 from tools.ec2_launcher.models import SectionPatch
 from tools.ec2_launcher.ui.sg_chips import SgChipsWidget
 from tools.ec2_launcher.ui.vpc_badge import VpcBadge
+from ui.common.styles import get_checkbox_style
 from ui.common.widgets import SearchableComboBox
 
 _STATE_COLORS: Dict[str, str] = {
@@ -63,6 +64,8 @@ class ReferencePanel(QWidget):
         super().__init__(parent)
         self._instances: Dict[str, Instance] = {}
         self._loaded: Optional[Instance] = None
+
+        self.setStyleSheet(get_checkbox_style())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
