@@ -166,12 +166,24 @@ class AwsAdapter(CloudProviderPort):
             logger.error(f"Error describing instances: {e}")
             return []
 
-    def list_amis(self, region: str, owners: List[str]) -> List[Ami]:
+    def list_amis(
+        self,
+        region: str,
+        owners: List[str],
+        filters: Optional[List[Dict]] = None,
+    ) -> List[Ami]:
         try:
             if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
-                 
-            response = self.ec2.describe_images(Owners=owners)
+                self.ec2 = self.session.client("ec2", region_name=region)
+
+            effective_filters = [{"Name": "state", "Values": ["available"]}]
+            if filters:
+                effective_filters.extend(filters)
+
+            response = self.ec2.describe_images(
+                Owners=owners,
+                Filters=effective_filters,
+            )
             amis = []
             for item in response.get("Images", []):
                 tags = self._get_tags(item)
@@ -180,7 +192,8 @@ class AwsAdapter(CloudProviderPort):
                     name=item.get("Name", "Unnamed"),
                     description=item.get("Description", ""),
                     platform=item.get("PlatformDetails", "Linux/UNIX"),
-                    tags=tags
+                    tags=tags,
+                    creation_date=item.get("CreationDate"),
                 ))
             return amis
         except (ClientError, BotoCoreError) as e:

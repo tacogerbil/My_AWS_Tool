@@ -62,6 +62,7 @@ class Ami:
     description: str
     platform: str
     tags: List[Tag] = field(default_factory=list)
+    creation_date: Optional[str] = None  # ISO-8601 from AWS; used for "latest" selection
 
 @dataclass
 class KeyPair:

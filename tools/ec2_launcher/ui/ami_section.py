@@ -1,12 +1,16 @@
 """
 ami_section.py — Tabbed AMI picker with Quick Start, My AMIs, and Recents.
 
-Each tab exposes the same underlying SearchableComboBox, filtered differently.
-A detail card below the tabs shows name, AMI ID, platform, and description
-for whichever image is currently selected.
+Search architecture
+-------------------
+Each tab has a dedicated QLineEdit search field that filters the combo items
+by exact case-insensitive substring match on AMI name OR AMI ID.  This is
+intentionally different from the QCompleter used in the rest of the app:
+AMI lists can be large, filter results must be precise, and completer
+token-matching produces unexpected false positives.
 
 Public API (used by ConfigForm):
-    populate(amis: List[Ami])
+    populate(quick_start_amis, my_amis)
     get_image_id() -> Optional[str]
     set_image_id(image_id: str)
     mark_error(has_error: bool)
@@ -16,12 +20,13 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QRadioButton,
     QTabWidget,
@@ -30,14 +35,13 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import Ami
-from ui.common.widgets import SearchableComboBox
 
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
-# OS category label → lowercase substrings to match against ami.name
+# OS category → lowercase substrings matched against ami.name
 _OS_FILTERS = {
-    "Amazon Linux": ["amazon"],
+    "Amazon Linux": ["amazon linux"],
     "macOS":        ["macos", "mac os"],
     "Ubuntu":       ["ubuntu"],
     "Windows":      ["windows"],
@@ -58,12 +62,15 @@ _OS_BTN_STYLE = """
         background-color: #2980b9; color: white; border-color: #2475aa;
     }
 """
-
-_CARD_STYLE = """
-    QFrame {
-        background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px;
+_SEARCH_STYLE = """
+    QLineEdit {
+        border: 1px solid #ced4da; border-radius: 4px;
+        padding: 4px 8px; font-size: 12px;
+        background: white; color: #2c3e50; min-height: 26px;
     }
+    QLineEdit:focus { border-color: #3498db; }
 """
+_CARD_STYLE = "QFrame { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; }"
 
 
 class AmiSection(QWidget):
@@ -73,7 +80,10 @@ class AmiSection(QWidget):
         super().__init__(parent)
         self._quick_start_amis: List[Ami] = []
         self._my_amis: List[Ami] = []
-        self._all_amis: List[Ami] = []   # combined; used for detail card + set_image_id
+        self._all_amis: List[Ami] = []
+        # OS/radio-filtered source lists; text search is applied on top
+        self._qs_source: List[Ami] = []
+        self._my_source: List[Ami] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -92,13 +102,9 @@ class AmiSection(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def populate(
-        self, quick_start_amis: List[Ami], my_amis: List[Ami]
-    ) -> None:
-        """Load Quick Start (AWS-provided) and My AMIs (account-owned) separately."""
+    def populate(self, quick_start_amis: List[Ami], my_amis: List[Ami]) -> None:
         self._quick_start_amis = quick_start_amis
         self._my_amis = my_amis
-        # Combined unique set — used by detail card, Recents, and set_image_id
         seen: dict = {}
         for ami in (quick_start_amis + my_amis):
             seen.setdefault(ami.image_id, ami)
@@ -145,10 +151,17 @@ class AmiSection(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        self._qs_combo = SearchableComboBox()
+        self._qs_search = QLineEdit()
+        self._qs_search.setPlaceholderText("Search by name or AMI ID…")
+        self._qs_search.setStyleSheet(_SEARCH_STYLE)
+        self._qs_search.setClearButtonEnabled(True)
+        layout.addWidget(self._qs_search)
+
+        self._qs_combo = QComboBox()
         layout.addWidget(self._qs_combo)
 
         self._os_group.buttonClicked.connect(self._on_os_clicked)
+        self._qs_search.textChanged.connect(self._on_qs_search)
         self._qs_combo.currentIndexChanged.connect(self._on_changed)
         return tab
 
@@ -167,10 +180,17 @@ class AmiSection(QWidget):
         radio_row.addStretch()
         layout.addLayout(radio_row)
 
-        self._my_combo = SearchableComboBox()
+        self._my_search = QLineEdit()
+        self._my_search.setPlaceholderText("Search by name or AMI ID…")
+        self._my_search.setStyleSheet(_SEARCH_STYLE)
+        self._my_search.setClearButtonEnabled(True)
+        layout.addWidget(self._my_search)
+
+        self._my_combo = QComboBox()
         layout.addWidget(self._my_combo)
 
         self._owned_radio.toggled.connect(self._refresh_my_amis)
+        self._my_search.textChanged.connect(self._on_my_search)
         self._my_combo.currentIndexChanged.connect(self._on_changed)
         return tab
 
@@ -178,7 +198,7 @@ class AmiSection(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 8, 6, 6)
-        self._rec_combo = SearchableComboBox()
+        self._rec_combo = QComboBox()
         layout.addWidget(self._rec_combo)
         self._rec_combo.currentIndexChanged.connect(self._on_changed)
         return tab
@@ -195,7 +215,6 @@ class AmiSection(QWidget):
             "font-weight: bold; font-size: 13px; color: #2c3e50; border: none;"
         )
         layout.addWidget(self._card_name)
-
         self._card_id = QLabel("")
         self._card_platform = QLabel("")
         self._card_desc = QLabel("")
@@ -203,7 +222,6 @@ class AmiSection(QWidget):
         for lbl in (self._card_id, self._card_platform, self._card_desc):
             lbl.setStyleSheet("color: #6c757d; font-size: 11px; border: none;")
             layout.addWidget(lbl)
-
         return card
 
     # ------------------------------------------------------------------
@@ -211,46 +229,55 @@ class AmiSection(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_quick_start(self) -> None:
-        checked = self._os_group.checkedButton()
-        self._on_os_clicked(checked)
+        self._on_os_clicked(self._os_group.checkedButton())
 
     def _on_os_clicked(self, btn: Optional[QPushButton]) -> None:
         keywords = _OS_FILTERS.get(btn.text() if btn else "All", [])
-        self._qs_combo.blockSignals(True)
-        self._qs_combo.clear()
-        for ami in self._quick_start_amis:
-            if not keywords or any(k in ami.name.lower() for k in keywords):
-                self._qs_combo.addItem(
-                    f"{ami.name}  ({ami.image_id})", userData=ami.image_id
-                )
-        self._qs_combo.blockSignals(False)
-        self._on_changed()
+        self._qs_source = [
+            a for a in self._quick_start_amis
+            if not keywords or any(k in a.name.lower() for k in keywords)
+        ]
+        self._rebuild_combo(self._qs_combo, self._qs_source,
+                            self._qs_search.text() if hasattr(self, "_qs_search") else "")
+
+    def _on_qs_search(self, text: str) -> None:
+        self._rebuild_combo(self._qs_combo, self._qs_source, text)
 
     def _refresh_my_amis(self) -> None:
         shared = hasattr(self, "_shared_radio") and self._shared_radio.isChecked()
-        self._my_combo.blockSignals(True)
-        self._my_combo.clear()
-        for ami in self._my_amis:
-            is_imported = any(t.key == "CreatedBy" for t in ami.tags)
-            if shared and not is_imported:
-                continue
-            self._my_combo.addItem(
-                f"{ami.name}  ({ami.image_id})", userData=ami.image_id
-            )
-        self._my_combo.blockSignals(False)
-        self._on_changed()
+        self._my_source = [
+            a for a in self._my_amis
+            if not shared or any(t.key == "CreatedBy" for t in a.tags)
+        ]
+        self._rebuild_combo(self._my_combo, self._my_source,
+                            self._my_search.text() if hasattr(self, "_my_search") else "")
+
+    def _on_my_search(self, text: str) -> None:
+        self._rebuild_combo(self._my_combo, self._my_source, text)
 
     def _refresh_recents(self) -> None:
         self._rec_combo.clear()
         for ami in self._all_amis:
-            self._rec_combo.addItem(
-                f"{ami.name}  ({ami.image_id})", userData=ami.image_id
-            )
+            self._rec_combo.addItem(f"{ami.name}  ({ami.image_id})", userData=ami.image_id)
 
-    def _active_combo(self) -> SearchableComboBox:
-        return [self._qs_combo, self._my_combo, self._rec_combo][
-            self._tabs.currentIndex()
-        ]
+    def _rebuild_combo(self, combo: QComboBox, source: List[Ami], text: str) -> None:
+        """Repopulate combo with AMIs whose name or ID contain text (exact substring)."""
+        lower = text.strip().lower()
+        prev_data = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for ami in source:
+            if lower and lower not in ami.name.lower() and lower not in ami.image_id.lower():
+                continue
+            combo.addItem(f"{ami.name}  ({ami.image_id})", userData=ami.image_id)
+        idx = combo.findData(prev_data)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        self._on_changed()
+
+    def _active_combo(self) -> QComboBox:
+        return [self._qs_combo, self._my_combo, self._rec_combo][self._tabs.currentIndex()]
 
     def _on_changed(self, _index: int = 0) -> None:
         image_id = self._active_combo().currentData()

@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 from core.ports import CloudProviderPort
-from core.models import Vpc, Subnet, SecurityGroup, Instance, Tag
+from core.models import Ami, KeyPair, Vpc, Subnet, SecurityGroup, Instance, Tag
 
 class MockAdapter(CloudProviderPort):
     """
@@ -60,6 +60,20 @@ class MockAdapter(CloudProviderPort):
         if instance_ids:
             return [i for i in self.instances if i.instance_id in instance_ids]
         return self.instances
+
+    def list_amis(
+        self,
+        region: str,
+        owners: List[str],
+        filters: Optional[List[Dict]] = None,
+    ) -> List[Ami]:
+        return []  # LauncherWindow._load_mock_data() provides AMIs directly
+
+    def list_key_pairs(self, region: str) -> List[KeyPair]:
+        return []
+
+    def list_buckets(self) -> List[str]:
+        return []
 
     def validate_connection(self) -> bool:
         return True

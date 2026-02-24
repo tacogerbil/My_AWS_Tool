@@ -206,26 +206,69 @@ class LauncherWindow(QWidget):
             ),
         ]
 
-        # Quick Start = standard AWS-provided images; My AMIs = account imports
+        # Quick Start = AWS-provided public images, mirroring the real AWS console catalog
         quick_start_amis = [
-            Ami(image_id="ami-qs-amzn2023",  name="Amazon Linux 2023",
-                description="Amazon Linux 2023 Kernel 6.1", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-ubuntu2204", name="Ubuntu Server 22.04 LTS",
-                description="Canonical, Ubuntu, 22.04 LTS, amd64 jammy image", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-ubuntu2004", name="Ubuntu Server 20.04 LTS",
-                description="Canonical, Ubuntu, 20.04 LTS, amd64 focal image", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-win2022",   name="Windows Server 2022 Base",
-                description="Microsoft Windows Server 2022 Full Locale English", platform="Windows"),
-            Ami(image_id="ami-qs-win2019",   name="Windows Server 2019 Base",
-                description="Microsoft Windows Server 2019 Full Locale English", platform="Windows"),
-            Ami(image_id="ami-qs-rhel9",     name="Red Hat Enterprise Linux 9",
-                description="RHEL 9 (HVM), SSD Volume Type", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-suse15",    name="SUSE Linux Enterprise Server 15 SP5",
-                description="SUSE Linux Enterprise Server 15 SP5", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-debian12",  name="Debian 12 (Bookworm)",
-                description="Debian 12 (Bookworm) amd64", platform="Linux/UNIX"),
-            Ami(image_id="ami-qs-macos13",   name="macOS Ventura 13",
-                description="macOS 13 Ventura", platform="macOS"),
+            # Amazon Linux
+            Ami("ami-qs-al2023-x86",   "Amazon Linux 2023",
+                "Amazon Linux 2023 AMI (Kernel 6.1, x86_64)", "Linux/UNIX"),
+            Ami("ami-qs-al2023-arm",   "Amazon Linux 2023 (arm64)",
+                "Amazon Linux 2023 AMI (Kernel 6.1, arm64/Graviton)", "Linux/UNIX"),
+            Ami("ami-qs-al2-x86",      "Amazon Linux 2",
+                "Amazon Linux 2 Kernel 5.10 AMI (x86_64)", "Linux/UNIX"),
+            # Ubuntu
+            Ami("ami-qs-ubuntu2404",   "Ubuntu Server 24.04 LTS",
+                "Canonical, Ubuntu, 24.04 LTS, amd64 noble image", "Linux/UNIX"),
+            Ami("ami-qs-ubuntu2204",   "Ubuntu Server 22.04 LTS",
+                "Canonical, Ubuntu, 22.04 LTS, amd64 jammy image", "Linux/UNIX"),
+            Ami("ami-qs-ubuntu2004",   "Ubuntu Server 20.04 LTS",
+                "Canonical, Ubuntu, 20.04 LTS, amd64 focal image", "Linux/UNIX"),
+            # Windows Server 2022
+            Ami("ami-qs-win2022-base", "Windows Server 2022 Base",
+                "Microsoft Windows Server 2022 Full Locale English AMI", "Windows"),
+            Ami("ami-qs-win2022-core", "Windows Server 2022 Core",
+                "Microsoft Windows Server 2022 Core Locale English AMI", "Windows"),
+            Ami("ami-qs-win2022-sql22-exp",
+                "Windows Server 2022 with SQL Server 2022 Express",
+                "Windows Server 2022 + SQL Server 2022 Express", "Windows"),
+            Ami("ami-qs-win2022-sql22-std",
+                "Windows Server 2022 with SQL Server 2022 Standard",
+                "Windows Server 2022 + SQL Server 2022 Standard", "Windows"),
+            Ami("ami-qs-win2022-sql22-web",
+                "Windows Server 2022 with SQL Server 2022 Web",
+                "Windows Server 2022 + SQL Server 2022 Web Edition", "Windows"),
+            Ami("ami-qs-win2022-sql22-ent",
+                "Windows Server 2022 with SQL Server 2022 Enterprise",
+                "Windows Server 2022 + SQL Server 2022 Enterprise", "Windows"),
+            Ami("ami-qs-win2022-dotnet",
+                "Windows Server 2022 with .NET Framework 4.8",
+                "Windows Server 2022 + .NET Framework 4.8", "Windows"),
+            Ami("ami-qs-win2022-vs2022",
+                "Windows Server 2022 with Visual Studio 2022 Community",
+                "Windows Server 2022 + Visual Studio 2022 Community Edition", "Windows"),
+            # Windows Server 2019
+            Ami("ami-qs-win2019-base", "Windows Server 2019 Base",
+                "Microsoft Windows Server 2019 Full Locale English AMI", "Windows"),
+            Ami("ami-qs-win2019-core", "Windows Server 2019 Core",
+                "Microsoft Windows Server 2019 Core Locale English AMI", "Windows"),
+            Ami("ami-qs-win2019-sql19-std",
+                "Windows Server 2019 with SQL Server 2019 Standard",
+                "Windows Server 2019 + SQL Server 2019 Standard", "Windows"),
+            # Red Hat
+            Ami("ami-qs-rhel9",   "Red Hat Enterprise Linux 9",
+                "RHEL 9 (HVM), SSD Volume Type", "Linux/UNIX"),
+            Ami("ami-qs-rhel8",   "Red Hat Enterprise Linux 8",
+                "RHEL 8 (HVM), SSD Volume Type", "Linux/UNIX"),
+            # SUSE
+            Ami("ami-qs-suse15",  "SUSE Linux Enterprise Server 15 SP5",
+                "SUSE Linux Enterprise Server 15 SP5 (HVM)", "Linux/UNIX"),
+            # Debian
+            Ami("ami-qs-debian12", "Debian 12 (Bookworm)",
+                "Debian GNU/Linux 12 (Bookworm) amd64", "Linux/UNIX"),
+            # macOS
+            Ami("ami-qs-macos14", "macOS Sonoma 14",
+                "macOS 14 Sonoma (x86_64)", "macOS"),
+            Ami("ami-qs-macos13", "macOS Ventura 13",
+                "macOS 13 Ventura (x86_64)", "macOS"),
         ]
         self._config_form.set_data(
             amis, quick_start_amis, MOCK_INSTANCE_TYPES, vpcs, subnets, sgs, key_pairs

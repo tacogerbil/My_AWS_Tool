@@ -29,8 +29,13 @@ class CloudProviderPort(ABC):
         pass
 
     @abstractmethod
-    def list_amis(self, region: str, owners: List[str]) -> List['Ami']:
-        """List AMIs filtered by owners."""
+    def list_amis(
+        self,
+        region: str,
+        owners: List[str],
+        filters: Optional[List[Dict]] = None,
+    ) -> List['Ami']:
+        """List AMIs filtered by owners and optional boto3-style filters."""
         pass
         
     @abstractmethod
