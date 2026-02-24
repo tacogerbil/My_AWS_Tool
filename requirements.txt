@@ -1,0 +1,6 @@
+boto3
+PySide6
+pytest
+black
+flake8
+mypy

@@ -1,0 +1,3 @@
+{
+    "compliance_note": "If using a E5 License within AWS tin order to create a windows 11 EC2, make sure to select \"Tenancy: Dedicated\" to stay compliant with the E5 license."
+}
