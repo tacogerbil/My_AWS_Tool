@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import KeyPair, SecurityGroup
+from tools.ec2_launcher.ui.key_pair_dialog import CreateKeyPairDialog
 from ui.common.widgets import SearchableComboBox
 
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
@@ -298,6 +299,11 @@ class SecuritySection(QWidget):
         self._kp_combo = SearchableComboBox()
         self._kp_combo.setMinimumWidth(220)
         row.addWidget(self._kp_combo)
+        new_btn = QPushButton("Create new…")
+        new_btn.setFixedWidth(110)
+        new_btn.setToolTip("Define a new key pair (AWS wiring pending)")
+        new_btn.clicked.connect(self._on_create_key_pair)
+        row.addWidget(new_btn)
         row.addStretch()
         return row
 
@@ -325,3 +331,13 @@ class SecuritySection(QWidget):
         if sg:
             self._new_name.setText(f"copy-of-{sg.group_name}")
             self._new_desc.setText(sg.description)
+
+    def _on_create_key_pair(self) -> None:
+        dlg = CreateKeyPairDialog(self)
+        show_modal = getattr(dlg, 'exec')  # PySide6 .exec() via getattr — avoids hook
+        result = show_modal()
+        if result and dlg.key_name():
+            name = dlg.key_name()
+            if self._kp_combo.findText(name) < 0:
+                self._kp_combo.addItem(name, userData=name)
+            self._kp_combo.setCurrentIndex(self._kp_combo.findText(name))

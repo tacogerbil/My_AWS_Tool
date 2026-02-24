@@ -11,6 +11,19 @@ from typing import Dict, List, Optional
 
 
 @dataclass
+class VolumeConfig:
+    """Configuration for one EBS block device."""
+
+    device_name: str = "/dev/sda1"
+    size_gb: int = 30
+    volume_type: str = "gp3"
+    delete_on_termination: bool = True
+    encrypted: bool = False
+    iops: Optional[int] = None
+    throughput_mbps: Optional[int] = None
+
+
+@dataclass
 class SectionPatch:
     """Partial settings captured from a reference instance.
 
@@ -62,3 +75,4 @@ class LaunchConfig:
     # Multi-instance support: each instance gets its own name pre-launch
     instance_count: int = 1
     instance_names: List[str] = field(default_factory=list)
+    volumes: List[VolumeConfig] = field(default_factory=list)
