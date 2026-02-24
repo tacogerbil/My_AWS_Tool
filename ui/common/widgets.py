@@ -22,6 +22,9 @@ class SearchableComboBox(QComboBox):
         self.pCompleter.setModel(self.model())
         self.setCompleter(self.pCompleter)
 
+        # Always show text from the beginning (left), not the end
+        self.currentIndexChanged.connect(self._reset_cursor)
+
     def setModel(self, model):
         super().setModel(model)
         self.pCompleter.setModel(model)
@@ -35,6 +38,12 @@ class SearchableComboBox(QComboBox):
 
     def addItems(self, texts):
         super().addItems(texts)
+
+    def _reset_cursor(self) -> None:
+        """Move cursor to position 0 so long items show their start, not their end."""
+        le = self.lineEdit()
+        if le:
+            le.home(False)
 
 
 from PySide6.QtGui import QStandardItemModel, QStandardItem

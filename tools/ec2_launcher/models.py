@@ -59,3 +59,6 @@ class LaunchConfig:
     sg_ids: List[str]
     key_name: str
     tags: Dict[str, str] = field(default_factory=dict)
+    # Multi-instance support: each instance gets its own name pre-launch
+    instance_count: int = 1
+    instance_names: List[str] = field(default_factory=list)
