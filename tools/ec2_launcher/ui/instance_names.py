@@ -204,45 +204,52 @@ class InstanceNamesSection(QWidget):
         count_lbl.setStyleSheet("font-weight: bold; color: #2c3e50; font-size: 13px;")
         row.addWidget(count_lbl)
 
+        import os
+        ui_dir = os.path.dirname(os.path.abspath(__file__))
+        up_arrow = os.path.join(ui_dir, "assets", "spin_up.svg").replace("\\", "/")
+        dn_arrow = os.path.join(ui_dir, "assets", "spin_down.svg").replace("\\", "/")
+
         self._count_spin = QSpinBox()
         self._count_spin.setRange(1, 20)
         self._count_spin.setValue(1)
         self._count_spin.setFixedWidth(65)
-        self._count_spin.setStyleSheet("""
-            QSpinBox {
+        self._count_spin.setStyleSheet(f"""
+            QSpinBox {{
                 border: 1px solid #ced4da; border-radius: 4px;
                 padding: 4px 10px; font-size: 13px; font-weight: bold;
                 background: white; color: #2c3e50; min-height: 28px;
-            }
-            QSpinBox:focus { border-color: #3498db; }
-            QSpinBox::up-button {
+            }}
+            QSpinBox:focus {{ border-color: #3498db; }}
+            QSpinBox::up-button {{
                 subcontrol-origin: border; subcontrol-position: top right;
                 width: 20px;
                 background: #f8f9fa;
                 border-left: 1px solid #ced4da; border-bottom: 1px solid #ced4da;
                 border-top-right-radius: 3px;
                 margin: 1px 1px 0 0;
-            }
-            QSpinBox::up-button:hover   { background: #e9ecef; }
-            QSpinBox::up-button:pressed { background: #dee2e6; }
-            QSpinBox::up-arrow { 
-                image: none; width: 0; height: 0; margin-bottom: 1px;
-                border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 4px solid #495057; 
-            }
-            QSpinBox::down-button {
+            }}
+            QSpinBox::up-button:hover   {{ background: #e9ecef; }}
+            QSpinBox::up-button:pressed {{ background: #dee2e6; }}
+            QSpinBox::up-arrow {{ 
+                image: url({up_arrow});
+                width: 10px; height: 6px;
+                margin-bottom: 1px;
+            }}
+            QSpinBox::down-button {{
                 subcontrol-origin: border; subcontrol-position: bottom right;
                 width: 20px;
                 background: #f8f9fa;
                 border-left: 1px solid #ced4da; border-top: 1px solid #ced4da;
                 border-bottom-right-radius: 3px;
                 margin: 0 1px 1px 0;
-            }
-            QSpinBox::down-button:hover   { background: #e9ecef; }
-            QSpinBox::down-button:pressed { background: #dee2e6; }
-            QSpinBox::down-arrow { 
-                image: none; width: 0; height: 0; margin-top: 1px;
-                border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid #495057; 
-            }
+            }}
+            QSpinBox::down-button:hover   {{ background: #e9ecef; }}
+            QSpinBox::down-button:pressed {{ background: #dee2e6; }}
+            QSpinBox::down-arrow {{ 
+                image: url({dn_arrow});
+                width: 10px; height: 6px;
+                margin-top: 1px;
+            }}
         """)
         row.addWidget(self._count_spin)
 
