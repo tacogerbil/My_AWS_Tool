@@ -175,6 +175,25 @@ class _SgRulesTable(QWidget):
         if row >= 0:
             self._table.removeRow(row)
 
+    def get_rules(self) -> List[InboundRule]:
+        """Return current table contents as InboundRule objects."""
+        rules: List[InboundRule] = []
+        for row in range(self._table.rowCount()):
+            combo = self._table.cellWidget(row, 0)
+            proto_item = self._table.item(row, 1)
+            port_item  = self._table.item(row, 2)
+            src_item   = self._table.item(row, 3)
+            desc_item  = self._table.item(row, 4)
+            proto = proto_item.text() if proto_item else "tcp"
+            proto = "all" if proto in ("-1", "all") else proto
+            rules.append(InboundRule(
+                protocol=proto,
+                port_range=port_item.text()  if port_item  else "",
+                cidr=src_item.text()         if src_item   else "0.0.0.0/0",
+                description=desc_item.text() if desc_item  else "",
+            ))
+        return rules
+
     def clear_rules(self) -> None:
         self._table.setRowCount(0)
 
@@ -193,8 +212,10 @@ class _SgRulesTable(QWidget):
 class SecuritySection(QWidget):
     """Side-by-side New SG creator (left) and Existing SG browser (right).
 
-    The ← arrow copies the browsed SG's name/description into the creator
-    as a starting template.  Key Pair selector lives below both panels.
+    Fill in the New SG form and the SG will be created automatically when
+    the Launch button is pressed.  The ← arrow copies an existing SG's
+    name/description into the creator as a starting template.
+    Key Pair selector lives below both panels.
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -223,9 +244,13 @@ class SecuritySection(QWidget):
             self._sg_combo.addItem(
                 f"{sg.group_name}  ({sg.group_id})", userData=sg.group_id
             )
+        self._sg_combo.setCurrentIndex(-1)
+        self._sg_combo.lineEdit().clear()
         self._kp_combo.clear()
         for kp in key_pairs:
             self._kp_combo.addItem(kp.key_name, userData=kp.key_name)
+        self._kp_combo.setCurrentIndex(-1)
+        self._kp_combo.lineEdit().clear()
 
     def get_sg_ids(self) -> List[str]:
         sg_id = self._sg_combo.currentData()
@@ -249,6 +274,18 @@ class SecuritySection(QWidget):
 
     def mark_error(self, has_error: bool) -> None:
         self._kp_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
+
+    def has_new_sg(self) -> bool:
+        """True if the New SG form has a name filled in."""
+        return bool(self._new_name.text().strip())
+
+    def get_new_sg_data(self) -> tuple:
+        """Return (name, description, rules) from the New SG form."""
+        return (
+            self._new_name.text().strip(),
+            self._new_desc.text().strip(),
+            self._rules_table.get_rules(),
+        )
 
     # ------------------------------------------------------------------
     # Private — UI construction

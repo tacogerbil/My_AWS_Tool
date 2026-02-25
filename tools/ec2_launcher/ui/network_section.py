@@ -72,8 +72,13 @@ class NetworkSection(QWidget):
             self._vpc_combo.addItem(
                 f"{vpc.vpc_id}  {label}  {vpc.cidr_block}", userData=vpc.vpc_id
             )
+        self._vpc_combo.setCurrentIndex(-1)
+        self._vpc_combo.lineEdit().clear()
         self._vpc_combo.blockSignals(False)
-        self._on_vpc_changed()
+        self._vpc_badge.set_vpc("")
+        self._subnet_combo.clear()
+        self._subnet_combo.lineEdit().clear()
+        self._subnet_badge.set_vpc("")
 
     def get_vpc_id(self) -> Optional[str]:
         return self._vpc_combo.currentData()
@@ -103,11 +108,14 @@ class NetworkSection(QWidget):
         vpc_id = self._vpc_combo.currentData() or ""
         self._vpc_badge.set_vpc(vpc_id)
         self._subnet_combo.clear()
-        for sub in self._all_subnets:
-            if not vpc_id or sub.vpc_id == vpc_id:
-                label = sub.name or sub.subnet_id
-                self._subnet_combo.addItem(
-                    f"{sub.subnet_id}  {label}  {sub.cidr_block}  {sub.availability_zone}",
-                    userData=sub.subnet_id,
-                )
+        if vpc_id:
+            for sub in self._all_subnets:
+                if sub.vpc_id == vpc_id:
+                    label = sub.name or sub.subnet_id
+                    self._subnet_combo.addItem(
+                        f"{sub.subnet_id}  {label}  {sub.cidr_block}  {sub.availability_zone}",
+                        userData=sub.subnet_id,
+                    )
+            self._subnet_combo.setCurrentIndex(-1)
+            self._subnet_combo.lineEdit().clear()
         self._subnet_badge.set_vpc(vpc_id)

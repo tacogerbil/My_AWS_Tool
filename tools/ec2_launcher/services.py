@@ -18,7 +18,7 @@ import logging
 from fnmatch import fnmatch as _fnmatch
 from typing import Dict, List, Optional, Tuple
 
-from core.models import Ami, Instance, KeyPair, SecurityGroup, Subnet, Vpc
+from core.models import Ami, InboundRule, Instance, KeyPair, SecurityGroup, Subnet, Vpc
 from core.ports import CloudProviderPort
 from tools.ec2_launcher.models import LaunchConfig, LaunchResult
 
@@ -207,6 +207,33 @@ class LauncherService:
                 region=self.region,
                 error=str(exc),
             )
+
+    def create_security_group(
+        self,
+        name: str,
+        description: str,
+        vpc_id: str,
+        rules: List[InboundRule],
+    ) -> SecurityGroup:
+        """Create a new Security Group and authorise its inbound rules."""
+        try:
+            return self.adapter.create_security_group(
+                self.region, name, description, vpc_id, rules
+            )
+        except Exception as exc:
+            logger.error("Failed to create SG '%s': %s", name, exc)
+            raise
+
+    def store_domain_credentials(self, ssm_path: str, username: str, password: str) -> None:
+        """Write domain join credentials to SSM Parameter Store as SecureStrings.
+
+        Callers should discard the plain-text strings immediately after this call.
+        """
+        params = {
+            f"{ssm_path}/username": username,
+            f"{ssm_path}/password": password,
+        }
+        self.adapter.put_ssm_parameters(self.region, params)
 
     def describe_instances_by_ids(self, instance_ids: List[str]) -> List[Instance]:
         """Poll current state for a specific list of instance IDs.

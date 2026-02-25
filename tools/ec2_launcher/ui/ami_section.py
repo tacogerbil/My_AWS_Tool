@@ -290,6 +290,7 @@ class AmiSection(QWidget):
         self._rec_combo.clear()
         for ami in self._all_amis:
             self._rec_combo.addItem(f"{ami.name}  ({ami.image_id})", userData=ami.image_id)
+        self._rec_combo.setCurrentIndex(-1)
 
     def _rebuild_combo(self, combo: QComboBox, source: List[Ami], text: str) -> None:
         """Repopulate combo with AMIs whose name or ID contain text (exact substring)."""
@@ -304,6 +305,8 @@ class AmiSection(QWidget):
         idx = combo.findData(prev_data)
         if idx >= 0:
             combo.setCurrentIndex(idx)
+        else:
+            combo.setCurrentIndex(-1)
         combo.blockSignals(False)
         self._on_changed()
 

@@ -39,6 +39,7 @@ from tools.ec2_launcher.ui.network_section import NetworkSection
 from tools.ec2_launcher.ui.security_section import SecuritySection
 from tools.ec2_launcher.ui.storage_section import StorageSection
 from tools.ec2_launcher.ui.tags_section import TagsSection
+from tools.ec2_launcher.ui.windows_setup_section import WindowsSetupSection
 from ui.common.collapsible import CollapsibleSection
 
 # QSpinBox sub-controls must be explicitly defined when any stylesheet is set,
@@ -130,19 +131,21 @@ class ConfigForm(QScrollArea):
         self._security  = SecuritySection()
         self._storage   = StorageSection()
         self._tags      = TagsSection()
+        self._windows   = WindowsSetupSection()
 
-        self._sec_instances = self._wrap("Instances", self._instances)
-        self._sec_image     = self._wrap("Image",     self._image)
-        self._sec_hardware  = self._wrap("Hardware",  self._hardware)
-        self._sec_storage   = self._wrap("Storage",   self._storage)
-        self._sec_network   = self._wrap("Network",   self._network)
-        self._sec_security  = self._wrap("Security",  self._security)
-        self._sec_tags      = self._wrap("Tags",      self._tags, collapsed=True)
+        self._sec_instances = self._wrap("Instances",     self._instances)
+        self._sec_image     = self._wrap("Image",         self._image)
+        self._sec_hardware  = self._wrap("Hardware",      self._hardware)
+        self._sec_storage   = self._wrap("Storage",       self._storage)
+        self._sec_network   = self._wrap("Network",       self._network)
+        self._sec_security  = self._wrap("Security",      self._security)
+        self._sec_tags      = self._wrap("Tags",          self._tags,    collapsed=True)
+        self._sec_windows   = self._wrap("Windows Setup", self._windows, collapsed=True)
 
         for sec in (
             self._sec_instances, self._sec_image, self._sec_hardware,
             self._sec_storage, self._sec_network, self._sec_security,
-            self._sec_tags,
+            self._sec_tags, self._sec_windows,
         ):
             layout.addWidget(sec)
 
@@ -201,12 +204,17 @@ class ConfigForm(QScrollArea):
     def get_launch_config(self) -> Optional[LaunchConfig]:
         """Validate and return LaunchConfig, or None on validation failure."""
         errors: Dict[str, bool] = dict(
-            image=False, hardware=False, vpc=False, subnet=False, key=False
+            image=False, instance_type=False, storage=False,
+            vpc=False, subnet=False, key=False
         )
 
-        image_id  = self._image.get_image_id()
+        image_id = self._image.get_image_id()
         if not image_id:
             errors["image"] = True
+
+        instance_type = self._hardware.get_instance_type()
+        if not instance_type:
+            errors["instance_type"] = True
 
         # Volume settings come exclusively from StorageSection
         volumes = self._storage.get_volumes()
@@ -214,7 +222,7 @@ class ConfigForm(QScrollArea):
         volume_gb   = root_vol.size_gb   if root_vol else None
         volume_type = root_vol.volume_type if root_vol else "gp3"
         if not volume_gb:
-            errors["hardware"] = True
+            errors["storage"] = True
 
         vpc_id = self._network.get_vpc_id()
         if not vpc_id:
@@ -229,13 +237,14 @@ class ConfigForm(QScrollArea):
             errors["key"] = True
 
         self._image.mark_error(errors["image"])
-        self._hardware.mark_error(errors["hardware"])
+        self._hardware.mark_error(errors["instance_type"])
         self._network.mark_error(errors["vpc"], errors["subnet"])
         self._security.mark_error(errors["key"])
 
         # Auto-expand sections that failed validation so errors are visible
         if errors["image"]:                        self._sec_image.expand()
-        if errors["hardware"]:                     self._sec_storage.expand()
+        if errors["instance_type"]:                self._sec_hardware.expand()
+        if errors["storage"]:                      self._sec_storage.expand()
         if errors["vpc"] or errors["subnet"]:      self._sec_network.expand()
         if errors["key"]:                          self._sec_security.expand()
 
@@ -244,7 +253,7 @@ class ConfigForm(QScrollArea):
 
         return LaunchConfig(
             image_id=image_id,
-            instance_type=self._hardware.get_instance_type(),
+            instance_type=instance_type,
             volume_gb=volume_gb,
             volume_type=volume_type,
             vpc_id=vpc_id,
@@ -256,6 +265,41 @@ class ConfigForm(QScrollArea):
             instance_names=self._instances.get_instance_names(),
             volumes=volumes,
         )
+
+    def get_validation_errors(self) -> List[str]:
+        """Return human-readable list of missing required fields (no side effects)."""
+        missing: List[str] = []
+        if not self._image.get_image_id():
+            missing.append("AMI / Image")
+        if not self._hardware.get_instance_type():
+            missing.append("Instance Type")
+        volumes = self._storage.get_volumes()
+        root_vol = volumes[0] if volumes else None
+        if not (root_vol and root_vol.size_gb):
+            missing.append("Root Volume Size (Storage section)")
+        if not self._network.get_vpc_id():
+            missing.append("VPC")
+        if not self._network.get_subnet_id():
+            missing.append("Subnet")
+        if not self._security.get_key_name():
+            missing.append("Key Pair")
+        return missing
+
+    def get_domain_config(self):
+        """Return WindowsDomainConfig if Windows Setup is filled, else None."""
+        return self._windows.get_domain_config()
+
+    def has_pending_sg(self) -> bool:
+        """True if the New SG form has a name — SG will be created at launch."""
+        return self._security.has_new_sg()
+
+    def get_new_sg_data(self) -> tuple:
+        """Return (name, description, rules) from the New SG form."""
+        return self._security.get_new_sg_data()
+
+    def get_current_vpc_id(self) -> Optional[str]:
+        """Return the currently selected VPC ID (needed to scope new SGs)."""
+        return self._network.get_vpc_id()
 
     # ------------------------------------------------------------------
     # Private

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from core.models import Instance, SecurityGroup, Subnet, Vpc
+from core.models import InboundRule, Instance, SecurityGroup, Subnet, Vpc
 
 if TYPE_CHECKING:
     from tools.ec2_launcher.models import LaunchConfig, LaunchResult
@@ -82,11 +82,32 @@ class CloudProviderPort(ABC):
         pass
 
     @abstractmethod
+    def create_security_group(
+        self,
+        region: str,
+        name: str,
+        description: str,
+        vpc_id: str,
+        rules: List[InboundRule],
+    ) -> SecurityGroup:
+        """Create a new SG, authorise inbound rules, return the new SecurityGroup."""
+        pass
+
+    @abstractmethod
     def run_instances(self, region: str, config: "LaunchConfig") -> "LaunchResult":
         """Launch EC2 instances described by config.
 
         Returns a LaunchResult with the assigned instance IDs. On complete
         failure the result has an empty ``instance_ids`` list and a non-None
         ``error`` string.
+        """
+        pass
+
+    @abstractmethod
+    def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
+        """Write key/value pairs to SSM Parameter Store as SecureString (KMS-encrypted).
+
+        Existing parameters are overwritten.  Callers should discard the
+        plain-text values immediately after this call returns.
         """
         pass

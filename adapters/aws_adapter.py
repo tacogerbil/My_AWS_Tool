@@ -19,6 +19,25 @@ def _fmt_port_range(protocol: str, from_port: Optional[int], to_port: Optional[i
     return f"{from_port}-{to_port}"
 
 
+def _rules_to_permissions(rules: List[InboundRule]) -> List[Dict]:
+    """Convert InboundRule list to boto3 IpPermissions format."""
+    perms: List[Dict] = []
+    for rule in rules:
+        proto = "-1" if rule.protocol == "all" else rule.protocol
+        perm: Dict = {"IpProtocol": proto}
+        if rule.protocol != "all" and rule.port_range not in ("", "All"):
+            if "-" in rule.port_range:
+                lo, hi = rule.port_range.split("-", 1)
+                perm["FromPort"] = int(lo)
+                perm["ToPort"]   = int(hi)
+            elif rule.port_range.isdigit():
+                perm["FromPort"] = int(rule.port_range)
+                perm["ToPort"]   = int(rule.port_range)
+        perm["IpRanges"] = [{"CidrIp": rule.cidr, "Description": rule.description}]
+        perms.append(perm)
+    return perms
+
+
 def _parse_inbound_rules(permissions: List[Dict]) -> List[InboundRule]:
     rules: List[InboundRule] = []
     for perm in permissions:
@@ -135,6 +154,33 @@ class AwsAdapter(CloudProviderPort):
         except (ClientError, BotoCoreError) as e:
             logger.error(f"Error listing Security Groups: {e}")
             return []
+
+    def create_security_group(
+        self,
+        region: str,
+        name: str,
+        description: str,
+        vpc_id: str,
+        rules: List[InboundRule],
+    ) -> SecurityGroup:
+        if region != self.session.region_name:
+            self.ec2 = self.session.client("ec2", region_name=region)
+        try:
+            sg_id = self.ec2.create_security_group(
+                GroupName=name, Description=description, VpcId=vpc_id
+            )["GroupId"]
+            if rules:
+                self.ec2.authorize_security_group_ingress(
+                    GroupId=sg_id,
+                    IpPermissions=_rules_to_permissions(rules),
+                )
+            return SecurityGroup(
+                group_id=sg_id, group_name=name,
+                description=description, vpc_id=vpc_id, inbound_rules=rules,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Failed to create security group '%s': %s", name, exc)
+            raise
 
     def describe_instances(self, region: str, instance_ids: Optional[List[str]] = None, tag_filters: Optional[List[Dict[str, str]]] = None) -> List[Instance]:
         try:
@@ -311,6 +357,18 @@ class AwsAdapter(CloudProviderPort):
             logger.error(f"Failed to describe instance type {instance_type}: {e}")
             return {}
 
+    def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
+        """Write credentials to SSM Parameter Store as KMS-encrypted SecureStrings."""
+        ssm = self.session.client("ssm", region_name=region)
+        for name, value in params.items():
+            ssm.put_parameter(
+                Name=name,
+                Value=value,
+                Type="SecureString",
+                Overwrite=True,
+            )
+            logger.info("SSM parameter stored: %s", name)
+
     def list_buckets(self) -> List[str]:
         """Lists all S3 buckets."""
         try:
@@ -377,7 +435,12 @@ class AwsAdapter(CloudProviderPort):
                 }
             ]
             try:
-                resp = self.ec2.run_instances(
+                # Substitute the instance-specific computer name into UserData
+                userdata = (
+                    config.user_data_template.replace("<<INSTANCE_NAME>>", name)
+                    if config.user_data_template else None
+                )
+                kwargs: Dict = dict(
                     ImageId=config.image_id,
                     InstanceType=config.instance_type,
                     MinCount=1,
@@ -394,6 +457,11 @@ class AwsAdapter(CloudProviderPort):
                     BlockDeviceMappings=bdm,
                     TagSpecifications=tag_spec,
                 )
+                if userdata:
+                    kwargs["UserData"] = userdata
+                if config.iam_instance_profile:
+                    kwargs["IamInstanceProfile"] = {"Name": config.iam_instance_profile}
+                resp = self.ec2.run_instances(**kwargs)
                 iid = resp["Instances"][0]["InstanceId"]
                 launched_ids.append(iid)
                 logger.info("Launched instance %s (%s)", iid, name)

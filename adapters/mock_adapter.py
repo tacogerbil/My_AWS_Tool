@@ -125,6 +125,24 @@ class MockAdapter(CloudProviderPort):
     def list_buckets(self) -> List[str]:
         return []
 
+    def create_security_group(self, region, name, description, vpc_id, rules):
+        """Mock SG creation — adds to the in-memory SG list and returns it."""
+        import uuid
+        from core.models import SecurityGroup
+        sg = SecurityGroup(
+            group_id=f"sg-mock-{uuid.uuid4().hex[:8]}",
+            group_name=name,
+            description=description,
+            vpc_id=vpc_id,
+            inbound_rules=rules,
+        )
+        self.sgs.append(sg)
+        return sg
+
+    def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
+        """No-op stub — mock mode never stores credentials."""
+        pass
+
     def validate_connection(self) -> bool:
         return True
 

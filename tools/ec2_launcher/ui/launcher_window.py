@@ -286,30 +286,90 @@ class LauncherWindow(QWidget):
     # ------------------------------------------------------------------
 
     def _on_launch(self) -> None:
+        import dataclasses
+
         config = self._config_form.get_launch_config()
         if config is None:
+            missing = self._config_form.get_validation_errors()
+            detail = "\n".join(f"  \u2022 {m}" for m in missing)
             QMessageBox.warning(
                 self,
                 "Incomplete Configuration",
-                "Please fill in all required fields (highlighted in red).",
+                f"Please fill in the following required fields:\n\n{detail}",
             )
             return
 
         if self._service is None:
-            # No real service wired — open monitor backed by mock adapter
             from adapters.mock_adapter import MockAdapter
             from tools.ec2_launcher.services import LauncherService
             svc = LauncherService(MockAdapter(), region="us-east-1")
         else:
             svc = self._service
 
-        # Disable the button to prevent double-clicks while the monitor is open
+        # If the user filled in the New SG form, create that SG now —
+        # atomically with the launch so no orphaned resources are left behind.
+        if self._config_form.has_pending_sg():
+            vpc_id = self._config_form.get_current_vpc_id()
+            if not vpc_id:
+                QMessageBox.warning(
+                    self, "No VPC Selected",
+                    "Please select a VPC before launching with a new Security Group.",
+                )
+                return
+            name, desc, rules = self._config_form.get_new_sg_data()
+            try:
+                sg = svc.create_security_group(name, desc, vpc_id, rules)
+                logger.info("Created SG %s (%s) for launch", sg.group_id, sg.group_name)
+                config = dataclasses.replace(config, sg_ids=[sg.group_id] + config.sg_ids)
+            except Exception as exc:
+                QMessageBox.critical(
+                    self, "Security Group Creation Failed",
+                    f"Could not create Security Group '{name}':\n{exc}\n\n"
+                    "Launch aborted — no instances were started."
+                )
+                return
+
+        # Handle Windows domain-join configuration (optional section).
+        domain_cfg = self._config_form.get_domain_config()
+        if domain_cfg is not None:
+            config = self._apply_domain_config(config, domain_cfg, svc)
+            if config is None:
+                return  # error already shown
+
         self._launch_btn.setEnabled(False)
         self._launch_btn.setText("Launching…")
 
         dlg = LaunchMonitorDialog(config=config, service=svc, parent=self)
         dlg.finished.connect(self._on_monitor_closed)
         dlg.show()
+
+    def _apply_domain_config(self, config, domain_cfg, svc) -> Optional[object]:
+        """Store SSM credentials + embed UserData template; return updated config or None."""
+        import dataclasses
+        from tools.ec2_launcher.ui.userdata_builder import build_windows_userdata
+
+        try:
+            svc.store_domain_credentials(
+                domain_cfg.ssm_path,
+                domain_cfg.username,
+                domain_cfg.password,
+            )
+            logger.info("Domain credentials stored to SSM at %s", domain_cfg.ssm_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "SSM Error",
+                f"Could not store domain credentials in SSM Parameter Store:\n{exc}\n\n"
+                "Launch aborted — no instances were started."
+            )
+            return None
+
+        userdata = build_windows_userdata(domain_cfg)
+        iam_profile = domain_cfg.iam_profile or None
+        return dataclasses.replace(
+            config,
+            user_data_template=userdata or None,
+            iam_instance_profile=iam_profile,
+        )
 
     def _on_monitor_closed(self) -> None:
         """Re-enable the launch button once the monitor dialog is dismissed."""

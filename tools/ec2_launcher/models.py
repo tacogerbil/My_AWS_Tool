@@ -58,6 +58,26 @@ class SectionPatch:
 
 
 @dataclass
+class WindowsDomainConfig:
+    """Windows domain-join settings captured from the Windows Setup section.
+
+    Credentials (username / password) are held in memory only.
+    At launch time the launcher writes them to SSM Parameter Store
+    (SecureString, KMS-encrypted) and they are never written to disk.
+    """
+
+    enabled: bool = False
+    domain: str = ""          # FQDN, e.g. "corp.example.com"
+    dc_host: str = ""         # DC hostname / IP for LDAP query
+    username: str = ""        # DOMAIN\\user — used for LDAP query & SSM label
+    password: str = ""        # In-memory only; stored to SSM at launch time
+    ssm_path: str = "/domain/join"   # SSM path prefix for credentials
+    ou_dn: str = ""           # Full DN of target OU/Container
+    description: str = ""     # AD computer object description (post-join)
+    iam_profile: str = ""     # IAM instance profile name for SSM access
+
+
+@dataclass
 class LaunchConfig:
     """Fully-validated configuration ready for ec2.run_instances.
 
@@ -78,6 +98,9 @@ class LaunchConfig:
     instance_count: int = 1
     instance_names: List[str] = field(default_factory=list)
     volumes: List[VolumeConfig] = field(default_factory=list)
+    # Windows domain join — UserData template uses <<INSTANCE_NAME>> marker
+    user_data_template: Optional[str] = None
+    iam_instance_profile: Optional[str] = None
 
 
 @dataclass

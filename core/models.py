@@ -82,3 +82,12 @@ class Ami:
 class KeyPair:
     """Represents an EC2 Key Pair."""
     key_name: str
+
+
+@dataclass
+class OrgUnit:
+    """An Active Directory Organizational Unit or Container."""
+    name: str                # Display name, e.g. "Prod"
+    distinguished_name: str  # Full DN: "OU=Prod,OU=Servers,DC=corp,DC=example,DC=com"
+    object_class: str = "organizationalUnit"  # "organizationalUnit" | "container"
+    depth: int = 0           # Nesting depth — used for display indentation

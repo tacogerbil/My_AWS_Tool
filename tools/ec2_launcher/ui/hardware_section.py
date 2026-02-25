@@ -95,6 +95,8 @@ class HardwareSection(QWidget):
     def populate(self, instance_types: List[str]) -> None:
         self._type_combo.clear()
         self._type_combo.addItems(instance_types)
+        self._type_combo.setCurrentIndex(-1)
+        self._type_combo.lineEdit().clear()
 
     def get_instance_type(self) -> str:
         return self._type_combo.currentText()
