@@ -143,9 +143,9 @@ class CheckableComboBox(SearchableComboBox):
     # ------------------------------------------------------------------
 
     def _filter_popup(self, text: str) -> None:
-        """Open popup once if not visible; filter rows by partial match."""
+        """Filter visible rows while popup is open; never calls showPopup()."""
         if not self.view().isVisible():
-            self.showPopup()
+            return
         for row in range(self.model.rowCount()):
             item = self.model.item(row)
             hidden = bool(text) and text.lower() not in item.text().lower()
