@@ -71,10 +71,13 @@ class CheckableComboBox(SearchableComboBox):
         self.model = QStandardItemModel(self)
         self.setModel(self.model)
 
+        # When ANY item's state changes (via code or native click), we update colors and emit.
+        self.model.dataChanged.connect(self._on_model_data_changed)
+
         # Intercept completer selection → toggle checkbox instead of navigating.
         self.pCompleter.activated.connect(self._on_completer_activated)
-        # Clicking a row in the main dropdown also toggles its checkbox.
-        self.view().pressed.connect(self.handle_item_pressed)
+        # Clicking a row in the normal dropdown also toggles its checkbox.
+        self.view().pressed.connect(self._on_view_pressed)
 
     # ------------------------------------------------------------------
     # Keep main dropdown open while clicking checkboxes
@@ -103,35 +106,41 @@ class CheckableComboBox(SearchableComboBox):
     # Checkbox interaction
     # ------------------------------------------------------------------
 
+    def _on_model_data_changed(self, top_left, bottom_right, roles) -> None:
+        # Only react if the check state changed or all roles changed
+        if roles and Qt.CheckStateRole not in roles:
+            return
+            
+        for row in range(top_left.row(), bottom_right.row() + 1):
+            item = self.model.item(row)
+            if item.checkState() == Qt.Checked:
+                item.setBackground(QColor("#d5e8d4"))
+                item.setForeground(QColor("#1a5c1a"))
+            else:
+                item.setBackground(QColor())
+                item.setForeground(QColor())
+            self.item_toggled.emit(item.data(Qt.UserRole))
+            
+        self.selection_changed.emit(self.get_checked_data())
+
     def _on_completer_activated(self, text: str) -> None:
         """Toggle the checkbox for whichever item the completer just picked."""
         for i in range(self.model.rowCount()):
             if self.model.item(i).text() == text:
-                self._toggle_index(i)
+                item = self.model.item(i)
+                new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
+                item.setCheckState(new_state)  # This triggers _on_model_data_changed
                 break
-        # Clear edit text so the user can immediately search for another item.
-        # (If we left the summary "N selected: …" the completer would match nothing.)
+        
+        # The completer overwrote the text with the full item name. Clear it so they can search again.
         self.lineEdit().blockSignals(True)
         self.setEditText("")
         self.lineEdit().blockSignals(False)
 
-    def handle_item_pressed(self, index) -> None:
-        self._toggle_index(index.row())
-        self._update_text()
-
-    def _toggle_index(self, row: int) -> None:
-        item = self.model.item(row)
+    def _on_view_pressed(self, index) -> None:
+        item = self.model.item(index.row())
         new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
-        item.setCheckState(new_state)
-        # Tint row so checked items are clearly distinguishable from unchecked ones.
-        if new_state == Qt.Checked:
-            item.setBackground(QColor("#d5e8d4"))
-            item.setForeground(QColor("#1a5c1a"))
-        else:
-            item.setBackground(QColor())
-            item.setForeground(QColor())
-        self.item_toggled.emit(item.data(Qt.UserRole))
-        self.selection_changed.emit(self.get_checked_data())
+        item.setCheckState(new_state)  # This triggers _on_model_data_changed
 
     # ------------------------------------------------------------------
     # Public query / mutation
@@ -155,6 +164,9 @@ class CheckableComboBox(SearchableComboBox):
 
     def set_checked_data(self, data_list: list) -> None:
         """Check all rows whose UserRole data appears in *data_list*."""
+        # Block signals to avoid spamming selection_changed during bulk update
+        self.model.dataChanged.disconnect(self._on_model_data_changed)
+        
         for i in range(self.model.rowCount()):
             item = self.model.item(i)
             state = Qt.Checked if item.data(Qt.UserRole) in data_list else Qt.Unchecked
@@ -165,17 +177,6 @@ class CheckableComboBox(SearchableComboBox):
             else:
                 item.setBackground(QColor())
                 item.setForeground(QColor())
-        self._update_text()
-
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
-
-    def _update_text(self) -> None:
-        items = self.get_checked_items()
-        self.lineEdit().blockSignals(True)
-        if not items:
-            self.setEditText("")
-        else:
-            self.setEditText(f"{len(items)} selected: " + ", ".join(items))
-        self.lineEdit().blockSignals(False)
+                
+        self.model.dataChanged.connect(self._on_model_data_changed)
+        self.selection_changed.emit(self.get_checked_data())
