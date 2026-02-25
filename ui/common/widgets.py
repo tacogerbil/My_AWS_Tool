@@ -78,9 +78,10 @@ class CheckableComboBox(SearchableComboBox):
     # ------------------------------------------------------------------
 
     def hidePopup(self) -> None:
-        """Keep popup open while the user is clicking checkboxes."""
-        if not self.view().underMouse():
-            super().hidePopup()
+        """Keep popup open while typing or clicking checkboxes."""
+        if self.view().underMouse() or self.lineEdit().hasFocus():
+            return
+        super().hidePopup()
 
     # ------------------------------------------------------------------
     # Item management
@@ -142,8 +143,9 @@ class CheckableComboBox(SearchableComboBox):
     # ------------------------------------------------------------------
 
     def _filter_popup(self, text: str) -> None:
-        """Open popup and show only rows that contain *text* (case-insensitive)."""
-        self.showPopup()
+        """Open popup once if not visible; filter rows by partial match."""
+        if not self.view().isVisible():
+            self.showPopup()
         for row in range(self.model.rowCount()):
             item = self.model.item(row)
             hidden = bool(text) and text.lower() not in item.text().lower()
