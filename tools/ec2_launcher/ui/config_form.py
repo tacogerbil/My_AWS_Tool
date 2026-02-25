@@ -62,26 +62,30 @@ def _build_form_style() -> str:
     QLineEdit:focus, QComboBox:focus { border-color: #3498db; }
     QSpinBox {
         border: 1px solid #ced4da; border-radius: 4px;
-        padding: 5px 4px 5px 10px; min-height: 28px;
+        padding: 5px 22px 5px 10px; min-height: 28px;
         background: white; color: #2c3e50; font-size: 13px;
     }
     QSpinBox:focus { border-color: #3498db; }
     QSpinBox::up-button {
-        subcontrol-origin: border; subcontrol-position: top right;
-        width: 20px; background: #ecf0f1;
+        subcontrol-origin: padding; subcontrol-position: top right;
+        width: 20px; height: 15px;
+        background: #ecf0f1;
         border-left: 1px solid #ced4da; border-bottom: 1px solid #ced4da;
         border-top-right-radius: 3px;
     }
     QSpinBox::up-button:hover   { background: #d5d8dc; }
     QSpinBox::up-button:pressed { background: #bdc3c7; }
+    QSpinBox::up-arrow   { width: 8px; height: 8px; }
     QSpinBox::down-button {
-        subcontrol-origin: border; subcontrol-position: bottom right;
-        width: 20px; background: #ecf0f1;
+        subcontrol-origin: padding; subcontrol-position: bottom right;
+        width: 20px; height: 15px;
+        background: #ecf0f1;
         border-left: 1px solid #ced4da; border-top: 1px solid #ced4da;
         border-bottom-right-radius: 3px;
     }
     QSpinBox::down-button:hover   { background: #d5d8dc; }
     QSpinBox::down-button:pressed { background: #bdc3c7; }
+    QSpinBox::down-arrow { width: 8px; height: 8px; }
     QLabel { color: #34495e; font-size: 13px; }
     QPushButton {
         border-radius: 4px; padding: 5px 12px; font-size: 12px;

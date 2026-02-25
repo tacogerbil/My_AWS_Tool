@@ -46,7 +46,7 @@ class SearchableComboBox(QComboBox):
             le.home(False)
 
 
-from PySide6.QtGui import QStandardItemModel, QStandardItem
+from PySide6.QtGui import QColor, QStandardItemModel, QStandardItem
 
 
 class CheckableComboBox(SearchableComboBox):
@@ -109,7 +109,11 @@ class CheckableComboBox(SearchableComboBox):
             if self.model.item(i).text() == text:
                 self._toggle_index(i)
                 break
-        self._update_text()
+        # Clear edit text so the user can immediately search for another item.
+        # (If we left the summary "N selected: …" the completer would match nothing.)
+        self.lineEdit().blockSignals(True)
+        self.setEditText("")
+        self.lineEdit().blockSignals(False)
 
     def handle_item_pressed(self, index) -> None:
         self._toggle_index(index.row())
@@ -119,6 +123,13 @@ class CheckableComboBox(SearchableComboBox):
         item = self.model.item(row)
         new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
         item.setCheckState(new_state)
+        # Tint row so checked items are clearly distinguishable from unchecked ones.
+        if new_state == Qt.Checked:
+            item.setBackground(QColor("#d5e8d4"))
+            item.setForeground(QColor("#1a5c1a"))
+        else:
+            item.setBackground(QColor())
+            item.setForeground(QColor())
         self.item_toggled.emit(item.data(Qt.UserRole))
         self.selection_changed.emit(self.get_checked_data())
 
@@ -148,6 +159,12 @@ class CheckableComboBox(SearchableComboBox):
             item = self.model.item(i)
             state = Qt.Checked if item.data(Qt.UserRole) in data_list else Qt.Unchecked
             item.setCheckState(state)
+            if state == Qt.Checked:
+                item.setBackground(QColor("#d5e8d4"))
+                item.setForeground(QColor("#1a5c1a"))
+            else:
+                item.setBackground(QColor())
+                item.setForeground(QColor())
         self._update_text()
 
     # ------------------------------------------------------------------
