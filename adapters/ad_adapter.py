@@ -11,11 +11,52 @@ callers hold them in memory only and should discard them promptly.
 from __future__ import annotations
 
 import logging
-from typing import List
+from contextlib import contextmanager
+from typing import Generator, List, Optional, Tuple
 
 from core.models import OrgUnit
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _ldap_connect(
+    dc_host: str,
+    domain: str,
+    username: str,
+    password: str,
+) -> Generator[Tuple[object, str], None, None]:
+    """Context manager: open an NTLM-authenticated LDAP connection and yield (conn, base_dn).
+
+    Guarantees ``conn.unbind()`` on exit regardless of success or failure.
+
+    Raises
+    ------
+    RuntimeError  if ldap3 is not installed.
+    Exception     on connection or authentication failure (caller handles display).
+    """
+    try:
+        from ldap3 import ALL, NTLM, Connection, Server
+    except ImportError as exc:
+        raise RuntimeError(
+            "ldap3 is required for AD queries.  Install it: pip install ldap3"
+        ) from exc
+
+    base_dn = "DC=" + ",DC=".join(domain.split("."))
+    logger.debug("LDAP connect: host=%s base_dn=%s user=%s", dc_host, base_dn, username)
+
+    server = Server(dc_host, get_info=ALL)
+    conn = Connection(
+        server,
+        user=username,
+        password=password,
+        authentication=NTLM,
+        auto_bind=True,   # raises LDAPBindError on auth failure
+    )
+    try:
+        yield conn, base_dn
+    finally:
+        conn.unbind()
 
 
 def query_org_units(
@@ -43,48 +84,92 @@ def query_org_units(
     Exception      on connection or authentication failure (caller handles display).
     """
     try:
-        from ldap3 import ALL, NTLM, SUBTREE, Connection, Server
+        from ldap3 import SUBTREE
     except ImportError as exc:
         raise RuntimeError(
             "ldap3 is required for AD queries.  Install it: pip install ldap3"
         ) from exc
 
-    base_dn = "DC=" + ",DC=".join(domain.split("."))
-    logger.debug("AD query: host=%s base_dn=%s user=%s", dc_host, base_dn, username)
+    with _ldap_connect(dc_host, domain, username, password) as (conn, base_dn):
+        conn.search(
+            search_base=base_dn,
+            search_filter="(|(objectClass=organizationalUnit)(objectClass=container))",
+            search_scope=SUBTREE,
+            attributes=["distinguishedName", "name", "objectClass"],
+        )
 
-    server = Server(dc_host, get_info=ALL)
-    conn = Connection(
-        server,
-        user=username,
-        password=password,
-        authentication=NTLM,
-        auto_bind=True,   # raises LDAPBindError on auth failure
-    )
+        results: List[OrgUnit] = []
+        for entry in conn.entries:
+            dn = str(entry.distinguishedName)
+            name = str(entry.name)
+            classes = [c.lower() for c in entry.objectClass]
+            obj_class = "container" if "container" in classes else "organizationalUnit"
+            depth = _dn_depth(dn)
+            results.append(OrgUnit(
+                name=name,
+                distinguished_name=dn,
+                object_class=obj_class,
+                depth=depth,
+            ))
 
-    conn.search(
-        search_base=base_dn,
-        search_filter="(|(objectClass=organizationalUnit)(objectClass=container))",
-        search_scope=SUBTREE,
-        attributes=["distinguishedName", "name", "objectClass"],
-    )
-
-    results: List[OrgUnit] = []
-    for entry in conn.entries:
-        dn = str(entry.distinguishedName)
-        name = str(entry.name)
-        classes = [c.lower() for c in entry.objectClass]
-        obj_class = "container" if "container" in classes else "organizationalUnit"
-        depth = _dn_depth(dn)
-        results.append(OrgUnit(
-            name=name,
-            distinguished_name=dn,
-            object_class=obj_class,
-            depth=depth,
-        ))
-
-    conn.unbind()
     logger.info("AD query returned %d OUs/Containers", len(results))
     return sorted(results, key=lambda o: (o.depth, o.name.lower()))
+
+
+def check_computer_exists(
+    dc_host: str,
+    domain: str,
+    username: str,
+    password: str,
+    computer_name: str,
+) -> Optional[str]:
+    """Return the existing DN if a computer account named ``computer_name`` already
+    exists in AD, or ``None`` if the name is available.
+
+    Uses the AD convention for computer accounts: ``sAMAccountName=<name>$``.
+
+    Parameters
+    ----------
+    dc_host:       Hostname or IP of a domain controller.
+    domain:        FQDN of the domain (e.g. "corp.example.com").
+    username:      DOMAIN\\user or UPN format.
+    password:      In-memory only; never written to disk.
+    computer_name: Desired NetBIOS name (without trailing ``$``).
+
+    Returns
+    -------
+    ``str`` — the distinguishedName of the existing account, or ``None`` if free.
+
+    Raises
+    ------
+    RuntimeError  if ldap3 is not installed.
+    Exception     on connection or authentication failure (caller handles display).
+    """
+    try:
+        from ldap3 import SUBTREE
+    except ImportError as exc:
+        raise RuntimeError(
+            "ldap3 is required for AD queries.  Install it: pip install ldap3"
+        ) from exc
+
+    sam = f"{computer_name}$"
+    search_filter = f"(&(objectClass=computer)(sAMAccountName={sam}))"
+    logger.debug("AD computer check: host=%s filter=%s", dc_host, search_filter)
+
+    with _ldap_connect(dc_host, domain, username, password) as (conn, base_dn):
+        conn.search(
+            search_base=base_dn,
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=["distinguishedName"],
+        )
+        if conn.entries:
+            dn = str(conn.entries[0].distinguishedName)
+            logger.info("Computer '%s' already exists in AD at: %s", computer_name, dn)
+            return dn
+
+    logger.debug("Computer '%s' is available (not found in AD).", computer_name)
+    return None
 
 
 def _dn_depth(dn: str) -> int:

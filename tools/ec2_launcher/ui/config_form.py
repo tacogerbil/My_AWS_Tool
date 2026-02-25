@@ -24,7 +24,12 @@ Public API
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional
+
+# NetBIOS computer-name rules: 1–15 chars, letters/digits/hyphens,
+# must not start or end with a hyphen.
+_NETBIOS_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9\-]{0,13}[A-Za-z0-9])?$")
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
@@ -251,6 +256,14 @@ class ConfigForm(QScrollArea):
         if any(errors.values()):
             return None
 
+        # Layer 1 — domain-join name validation (no fallbacks allowed).
+        if self._windows.get_domain_config() is not None:
+            blank_indices = self._instances.mark_blank_errors()
+            dj_errors = self._domain_join_name_errors(blank_indices)
+            if dj_errors:
+                self._sec_instances.expand()
+                return None
+
         return LaunchConfig(
             image_id=image_id,
             instance_type=instance_type,
@@ -267,7 +280,7 @@ class ConfigForm(QScrollArea):
         )
 
     def get_validation_errors(self) -> List[str]:
-        """Return human-readable list of missing required fields (no side effects)."""
+        """Return human-readable list of validation failures (no UI side effects)."""
         missing: List[str] = []
         if not self._image.get_image_id():
             missing.append("AMI / Image")
@@ -283,6 +296,11 @@ class ConfigForm(QScrollArea):
             missing.append("Subnet")
         if not self._security.get_key_name():
             missing.append("Key Pair")
+
+        if self._windows.get_domain_config() is not None:
+            blank_indices = self._instances.mark_blank_errors()
+            missing.extend(self._domain_join_name_errors(blank_indices))
+
         return missing
 
     def set_service(self, service) -> None:
@@ -312,6 +330,37 @@ class ConfigForm(QScrollArea):
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
+
+    def _domain_join_name_errors(self, blank_indices: List[int]) -> List[str]:
+        """Return domain-join name validation error strings (no UI mutations).
+
+        Parameters
+        ----------
+        blank_indices: 0-based row indices already determined to be blank.
+                       Obtained from ``InstanceNamesSection.mark_blank_errors()``.
+
+        Returns
+        -------
+        List of human-readable error strings; empty when all names are valid.
+        """
+        errors: List[str] = []
+
+        if blank_indices:
+            human = [str(i + 1) for i in blank_indices]
+            errors.append(
+                "Instance names are required for domain join — "
+                f"blank: {', '.join(human)}"
+            )
+
+        for i, name in enumerate(self._instances.get_instance_names()):
+            if not _NETBIOS_RE.match(name):
+                errors.append(
+                    f"Instance {i + 1}: '{name}' is not a valid computer name "
+                    "(max 15 chars, letters/digits/hyphens, "
+                    "no leading/trailing hyphens)"
+                )
+
+        return errors
 
     @staticmethod
     def _wrap(

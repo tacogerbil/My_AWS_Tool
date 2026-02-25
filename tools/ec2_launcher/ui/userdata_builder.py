@@ -43,7 +43,7 @@ def build_windows_userdata(cfg: WindowsDomainConfig) -> str:
 
     phase2 = _build_phase2(ssm_user, ssm_pass, cfg.description) if cfg.description else ""
 
-    lines = _build_phase1(cfg.domain, cfg.ou_dn, ssm_user, ssm_pass, phase2)
+    lines = _build_phase1(cfg.domain, cfg.dc_host, cfg.ou_dn, ssm_user, ssm_pass, phase2)
     return "\n".join(lines)
 
 
@@ -69,12 +69,14 @@ def _build_phase2(ssm_user: str, ssm_pass: str, description: str) -> str:
 
 def _build_phase1(
     domain: str,
+    dc_host: str,
     ou_dn: str,
     ssm_user: str,
     ssm_pass: str,
     phase2_b64: str,
 ) -> list:
     """Return Phase 1 script lines (list avoids f-string brace conflicts with PS)."""
+    safe_dc = _escape_ps_dq(dc_host)
     lines = [
         "<powershell>",
         "$ErrorActionPreference = 'Stop'",
@@ -95,6 +97,24 @@ def _build_phase1(
         "          | ConvertTo-SecureString -AsPlainText -Force",
         "    $cred = New-Object System.Management.Automation.PSCredential($u, $p)",
         '    Write-Log "Credentials retrieved from SSM."',
+        "",
+        "    # Layer 4: AD pre-check — hard-stop if this computer name already exists.",
+        f'    $computerName = "{INSTANCE_NAME_MARKER}"',
+        "    $plainPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(",
+        "        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))",
+        f'    $ldapRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://{safe_dc}", $u, $plainPass)',
+        "    $searcher = New-Object System.DirectoryServices.DirectorySearcher($ldapRoot)",
+        '    $searcher.Filter = "(&(objectClass=computer)(sAMAccountName=${computerName}$))"',
+        "    $searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree",
+        "    $existing = $searcher.FindOne()",
+        "    $plainPass = $null; [System.GC]::Collect()   # zero plain-text password immediately",
+        "    if ($existing -ne $null) {",
+        '        $existingDN = $existing.Properties["distinguishedname"][0]',
+        '        Write-Log "LAUNCH BLOCKED: \'$computerName\' already exists in AD at: $existingDN"',
+        '        Write-Log "Will not overwrite an existing computer account. Halting."',
+        "        exit 1",
+        "    }",
+        '    Write-Log "AD pre-check passed: \'$computerName\' is available."',
         "",
     ]
 

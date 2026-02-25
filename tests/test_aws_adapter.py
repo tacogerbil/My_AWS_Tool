@@ -1,8 +1,10 @@
+import sys
 import pytest
 import boto3
 from botocore.stub import Stubber
 from adapters.aws_adapter import AwsAdapter
 from core.models import Vpc, Subnet
+from unittest.mock import MagicMock, patch
 
 @pytest.fixture
 def aws_adapter():
@@ -70,3 +72,86 @@ def test_validate_connection_fail(aws_adapter):
     with Stubber(aws_adapter.sts) as stubber:
         stubber.add_client_error("get_caller_identity", "AuthFailure")
         assert aws_adapter.validate_connection() is False
+
+
+# ---------------------------------------------------------------------------
+# check_computer_exists
+# ---------------------------------------------------------------------------
+# ldap3 is imported lazily inside the function body, so we must inject a mock
+# via sys.modules rather than patch module-level names in ad_adapter.
+
+def _build_mock_ldap3(entries):
+    """Return a mock ldap3 module whose Connection returns entries on .search()."""
+    mock_ldap3 = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.entries = entries
+    mock_ldap3.Connection.return_value = mock_conn
+    # Expose the constants the function uses (ALL, NTLM, SUBTREE)
+    mock_ldap3.ALL = "ALL"
+    mock_ldap3.NTLM = "NTLM"
+    mock_ldap3.SUBTREE = "SUBTREE"
+    return mock_ldap3, mock_conn
+
+
+def test_check_computer_exists_found():
+    """Returns the DN string when the computer account exists in AD."""
+    from adapters.ad_adapter import check_computer_exists
+
+    existing_dn = "CN=WEBSERVER-01,OU=Servers,DC=corp,DC=example,DC=com"
+    mock_entry = MagicMock()
+    mock_entry.distinguishedName.__str__ = lambda _: existing_dn
+
+    mock_ldap3, mock_conn = _build_mock_ldap3([mock_entry])
+
+    with patch.dict(sys.modules, {"ldap3": mock_ldap3}):
+        result = check_computer_exists(
+            dc_host="dc01.corp.example.com",
+            domain="corp.example.com",
+            username="CORP\\svc-launcher",
+            password="secret",
+            computer_name="WEBSERVER-01",
+        )
+
+    assert result == existing_dn
+    mock_conn.search.assert_called_once()
+    search_args = mock_conn.search.call_args
+    assert "(&(objectClass=computer)(sAMAccountName=WEBSERVER-01$))" in str(search_args)
+
+
+def test_check_computer_exists_not_found():
+    """Returns None when no matching computer account exists."""
+    from adapters.ad_adapter import check_computer_exists
+
+    mock_ldap3, _ = _build_mock_ldap3([])  # empty result set
+
+    with patch.dict(sys.modules, {"ldap3": mock_ldap3}):
+        result = check_computer_exists(
+            dc_host="dc01.corp.example.com",
+            domain="corp.example.com",
+            username="CORP\\svc-launcher",
+            password="secret",
+            computer_name="NEW-SERVER-01",
+        )
+
+    assert result is None
+
+
+def test_check_computer_exists_connection_error():
+    """Propagates the exception on LDAP connection failure."""
+    from adapters.ad_adapter import check_computer_exists
+
+    mock_ldap3 = MagicMock()
+    mock_ldap3.Connection.side_effect = Exception("LDAP connection refused")
+    mock_ldap3.ALL = "ALL"
+    mock_ldap3.NTLM = "NTLM"
+    mock_ldap3.SUBTREE = "SUBTREE"
+
+    with patch.dict(sys.modules, {"ldap3": mock_ldap3}):
+        with pytest.raises(Exception, match="LDAP connection refused"):
+            check_computer_exists(
+                dc_host="unreachable.example.com",
+                domain="corp.example.com",
+                username="CORP\\svc-launcher",
+                password="secret",
+                computer_name="ANY-NAME",
+            )

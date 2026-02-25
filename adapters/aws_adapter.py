@@ -469,6 +469,12 @@ class AwsAdapter(CloudProviderPort):
                 }
             ]
 
+        # Layer 3 — domain join requires explicit instance names; no auto-fallback.
+        if config.user_data_template and not config.instance_names:
+            raise ValueError(
+                "Domain join requires explicit instance names. "
+                "Auto-generated fallback names are forbidden when domain join is active."
+            )
         # Launch one instance per name so each gets its own tagged Name
         names = config.instance_names or [f"Instance-{i+1}" for i in range(config.instance_count)]
         for name in names:

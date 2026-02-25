@@ -107,6 +107,19 @@ class _InstanceRow(QWidget):
     def set_name(self, name: str) -> None:
         self._field.setText(name)
 
+    def is_blank(self) -> bool:
+        """True if the user left this field empty (placeholder does NOT count)."""
+        return self._field.text().strip() == ""
+
+    def mark_error(self, on: bool) -> None:
+        """Apply or remove a red border to signal a validation error."""
+        if on:
+            self._field.setStyleSheet(
+                _FIELD_STYLE + "QLineEdit { border: 1px solid #e74c3c; }"
+            )
+        else:
+            self._field.setStyleSheet(_FIELD_STYLE)
+
     def fade_in(self) -> None:
         """Animate opacity 0 → 1 when the row first appears."""
         effect = QGraphicsOpacityEffect(self)
@@ -162,8 +175,22 @@ class InstanceNamesSection(QWidget):
         return self._count_spin.value()
 
     def get_instance_names(self) -> List[str]:
-        """One name per instance, in order."""
+        """One name per instance, in order (placeholder returned for blank rows)."""
         return [row.get_name() for row in self._rows]
+
+    def mark_blank_errors(self) -> List[int]:
+        """Mark all blank rows with a red border; return 0-based indices of blank rows."""
+        blank: List[int] = []
+        for i, row in enumerate(self._rows):
+            if row.is_blank():
+                row.mark_error(True)
+                blank.append(i)
+        return blank
+
+    def clear_errors(self) -> None:
+        """Remove all error borders from every row."""
+        for row in self._rows:
+            row.mark_error(False)
 
     # ------------------------------------------------------------------
     # Private — UI construction

@@ -14,13 +14,20 @@ ConfigForm (60%)  |  ReferencePanel (40%)
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QMessageBox, QSplitter,
-)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from tools.ec2_launcher.models import SectionPatch
 from tools.ec2_launcher.ui.config_form import ConfigForm
@@ -340,6 +347,39 @@ class LauncherWindow(QWidget):
         # Handle Windows domain-join configuration (optional section).
         domain_cfg = self._config_form.get_domain_config()
         if domain_cfg is not None:
+            # Layer 2 — LDAP pre-check: abort hard if any name already exists in AD.
+            try:
+                QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+                conflicts = self._check_ad_name_conflicts(
+                    domain_cfg, config.instance_names
+                )
+            except Exception as exc:
+                QApplication.restoreOverrideCursor()
+                QMessageBox.critical(
+                    self,
+                    "AD Pre-Check Failed",
+                    f"Cannot connect to AD to verify names:\n{exc}\n\n"
+                    "Launch aborted.",
+                )
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if conflicts:
+                detail = "\n".join(
+                    f"  \u2022 {name}\n    \u2514 {dn}"
+                    for name, dn in conflicts
+                )
+                QMessageBox.critical(
+                    self,
+                    "LAUNCH BLOCKED \u2014 AD Name Conflict",
+                    "The following computer names already exist in Active Directory.\n"
+                    "No instances were started and no changes were made.\n\n"
+                    + detail
+                    + "\n\nRename the instances in the Instances section and try again.",
+                )
+                return
+
             config = self._apply_domain_config(config, domain_cfg, svc)
             if config is None:
                 return  # error already shown
@@ -350,6 +390,31 @@ class LauncherWindow(QWidget):
         dlg = LaunchMonitorDialog(config=config, service=svc, parent=self)
         dlg.finished.connect(self._on_monitor_closed)
         dlg.show()
+
+    @staticmethod
+    def _check_ad_name_conflicts(
+        domain_cfg: "WindowsDomainConfig",
+        names: List[str],
+    ) -> List[Tuple[str, str]]:
+        """Return list of (name, existing_dn) for any name already in AD.
+
+        Returns an empty list when all names are available.
+        Raises on LDAP connection or authentication failure — caller shows the error.
+        """
+        from adapters.ad_adapter import check_computer_exists
+
+        conflicts: List[Tuple[str, str]] = []
+        for name in names:
+            dn = check_computer_exists(
+                domain_cfg.dc_host,
+                domain_cfg.domain,
+                domain_cfg.username,
+                domain_cfg.password,
+                name,
+            )
+            if dn is not None:
+                conflicts.append((name, dn))
+        return conflicts
 
     def _apply_domain_config(self, config, domain_cfg, svc) -> Optional[object]:
         """Store SSM credentials + embed UserData template; return updated config or None."""
