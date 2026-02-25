@@ -431,20 +431,24 @@ class LaunchMonitorDialog(QDialog):
             f"✅ Launch submitted — {len(result.instance_ids)} instance(s) requested."
         )
 
-        # Re-key placeholder rows by real instance ID
-        names = result.instance_names
-        for old_key in list(self._rows.keys()):
-            self._rows.pop(old_key)   # remove all placeholder keys
+        # Match each real instance ID to an existing placeholder row by position.
+        # We update the row in-place (no new widgets) so there are never duplicate rows.
+        placeholder_rows = list(self._rows.values())
+        self._rows.clear()
 
-        for iid, name in zip(result.instance_ids, names):
-            if iid not in self._rows:
+        for i, (iid, name) in enumerate(zip(result.instance_ids, result.instance_names)):
+            if i < len(placeholder_rows):
+                # Re-use the existing row widget — just update its ID label
+                row = placeholder_rows[i]
+                row._id_lbl.setText(iid)
+                row._instance_id = iid
+            else:
+                # More instances than placeholders (shouldn't happen, but be safe)
                 row = _InstanceRow(name=name, instance_id=iid)
                 self._instance_layout.insertWidget(
-                    self._instance_layout.count() - 1, row  # before stretch
+                    self._instance_layout.count() - 1, row
                 )
-                self._rows[iid] = row
-            else:
-                self._rows[iid]._id_lbl.setText(iid)
+            self._rows[iid] = row
             self._log_event(f"  Instance '{name}' assigned ID: {iid}")
 
         # Log any per-instance errors reported at launch time

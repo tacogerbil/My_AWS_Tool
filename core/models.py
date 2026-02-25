@@ -72,7 +72,11 @@ class Ami:
     description: str
     platform: str
     tags: List[Tag] = field(default_factory=list)
-    creation_date: Optional[str] = None  # ISO-8601 from AWS; used for "latest" selection
+    creation_date: Optional[str] = None       # ISO-8601; used for "latest" selection
+    architecture: Optional[str] = None         # e.g. "x86_64", "arm64"
+    virtualization_type: Optional[str] = None  # "hvm" | "paravirtual"
+    root_device_type: Optional[str] = None     # "ebs" | "instance-store"
+    ena_support: Optional[bool] = None
 
 @dataclass
 class KeyPair:

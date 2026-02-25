@@ -207,22 +207,53 @@ class AmiSection(QWidget):
         card = QFrame()
         card.setStyleSheet(_CARD_STYLE)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
 
+        # Row 1: bold name
         self._card_name = QLabel("—")
         self._card_name.setStyleSheet(
             "font-weight: bold; font-size: 13px; color: #2c3e50; border: none;"
         )
         layout.addWidget(self._card_name)
-        self._card_id = QLabel("")
-        self._card_platform = QLabel("")
+
+        # Row 2: AMI ID + description
+        self._card_id   = QLabel("")
         self._card_desc = QLabel("")
         self._card_desc.setWordWrap(True)
-        for lbl in (self._card_id, self._card_platform, self._card_desc):
+        for lbl in (self._card_id, self._card_desc):
             lbl.setStyleSheet("color: #6c757d; font-size: 11px; border: none;")
             layout.addWidget(lbl)
+
+        # Row 3: metadata columns (Architecture | Publish Date | Virtualization | ENA | Root device)
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(24)
+        self._meta_arch  = self._make_meta_col(meta_row, "Architecture")
+        self._meta_date  = self._make_meta_col(meta_row, "Publish Date")
+        self._meta_virt  = self._make_meta_col(meta_row, "Virtualization")
+        self._meta_ena   = self._make_meta_col(meta_row, "ENA Support")
+        self._meta_root  = self._make_meta_col(meta_row, "Root device")
+        meta_row.addStretch()
+        layout.addLayout(meta_row)
+
         return card
+
+    @staticmethod
+    def _make_meta_col(parent_layout: QHBoxLayout, label: str) -> QLabel:
+        """Add a two-line label column (header + value) to parent_layout."""
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        hdr = QLabel(label)
+        hdr.setStyleSheet(
+            "font-size: 10px; font-weight: 700; color: #495057; "
+            "text-transform: uppercase; letter-spacing: 0.5px; border: none;"
+        )
+        val = QLabel("—")
+        val.setStyleSheet("font-size: 12px; color: #2c3e50; border: none;")
+        col.addWidget(hdr)
+        col.addWidget(val)
+        parent_layout.addLayout(col)
+        return val  # caller stores the value label to update it later
 
     # ------------------------------------------------------------------
     # Private — refresh / filter
@@ -284,10 +315,29 @@ class AmiSection(QWidget):
         ami = next((a for a in self._all_amis if a.image_id == image_id), None)
         if ami:
             self._card_name.setText(ami.name)
-            self._card_id.setText(f"AMI ID: {ami.image_id}")
-            self._card_platform.setText(f"Platform: {ami.platform}")
-            self._card_desc.setText(ami.description)
+            self._card_id.setText(f"{ami.image_id}    ·    {ami.platform}")
+            self._card_desc.setText(ami.description or "")
+
+            # Architecture — format like AWS Console: "64-bit (x86)" or "64-bit (Arm)"
+            arch_map = {
+                "x86_64": "64-bit (x86)",
+                "arm64":  "64-bit (Arm)",
+                "i386":   "32-bit (x86)",
+            }
+            arch = arch_map.get(ami.architecture or "", ami.architecture or "—")
+            self._meta_arch.setText(arch)
+
+            # Publish date — strip the time component if present
+            pub = (ami.creation_date or "").split("T")[0] or "—"
+            self._meta_date.setText(pub)
+
+            self._meta_virt.setText(ami.virtualization_type or "—")
+            self._meta_ena.setText("Enabled" if ami.ena_support else ("—" if ami.ena_support is None else "Disabled"))
+            self._meta_root.setText(ami.root_device_type or "—")
         else:
             self._card_name.setText("—")
-            for lbl in (self._card_id, self._card_platform, self._card_desc):
-                lbl.setText("")
+            self._card_id.setText("")
+            self._card_desc.setText("")
+            for lbl in (self._meta_arch, self._meta_date, self._meta_virt,
+                        self._meta_ena, self._meta_root):
+                lbl.setText("—")

@@ -222,6 +222,10 @@ class AwsAdapter(CloudProviderPort):
                     platform=item.get("PlatformDetails", "Linux/UNIX"),
                     tags=tags,
                     creation_date=item.get("CreationDate"),
+                    architecture=item.get("Architecture"),
+                    virtualization_type=item.get("VirtualizationType"),
+                    root_device_type=item.get("RootDeviceType"),
+                    ena_support=item.get("EnaSupport"),
                 ))
             return amis
         except (ClientError, BotoCoreError) as e:
