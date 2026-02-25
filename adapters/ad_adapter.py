@@ -45,10 +45,19 @@ def _ldap_connect(
     base_dn = "DC=" + ",DC=".join(domain.split("."))
     logger.debug("LDAP connect: host=%s base_dn=%s user=%s", dc_host, base_dn, username)
 
+    # ldap3 NTLM strictly requires the DOMAIN\\username format.
+    # If the user just typed "svc-launcher", we prepend the domain automatically.
+    if "\\" not in username and "@" not in username:
+        # Extract the short NETBIOS domain (e.g. "corp" from "corp.example.com")
+        short_domain = domain.split(".")[0].upper()
+        formatted_username = f"{short_domain}\\{username}"
+    else:
+        formatted_username = username
+
     server = Server(dc_host, get_info=ALL)
     conn = Connection(
         server,
-        user=username,
+        user=formatted_username,
         password=password,
         authentication=NTLM,
         auto_bind=True,   # raises LDAPBindError on auth failure
