@@ -50,11 +50,15 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem
 
 
 class CheckableComboBox(SearchableComboBox):
-    """Searchable, multi-select combo with per-item checkboxes.
+    """Multi-select combo with checkboxes.
+
+    Search works identically to SearchableComboBox — the inherited QCompleter
+    handles it.  Selecting a completion toggles that item's checkbox instead of
+    navigating to it.  The main dropdown also supports clicking to check/uncheck.
 
     Signals:
-        selection_changed(list): emits list of UserRole data for all checked rows.
-        item_toggled(object):    emits the UserRole data of the last-toggled row.
+        selection_changed(list): UserRole data for all checked rows.
+        item_toggled(object):    UserRole data of the last-toggled row.
     """
 
     selection_changed = Signal(list)
@@ -63,25 +67,22 @@ class CheckableComboBox(SearchableComboBox):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        # Disable inherited completer — filtering is done in-popup via _filter_popup.
-        self.setCompleter(None)
-
-        # Replace default model with one that supports checkboxes.
+        # Swap in a checkable model; SearchableComboBox.setModel syncs the completer.
         self.model = QStandardItemModel(self)
         self.setModel(self.model)
 
+        # Intercept completer selection → toggle checkbox instead of navigating.
+        self.pCompleter.activated.connect(self._on_completer_activated)
+        # Clicking a row in the main dropdown also toggles its checkbox.
         self.view().pressed.connect(self.handle_item_pressed)
-        self.lineEdit().textChanged.connect(self._filter_popup)
 
     # ------------------------------------------------------------------
-    # Popup behaviour
+    # Keep main dropdown open while clicking checkboxes
     # ------------------------------------------------------------------
 
     def hidePopup(self) -> None:
-        """Keep popup open while typing or clicking checkboxes."""
-        if self.view().underMouse() or self.lineEdit().hasFocus():
-            return
-        super().hidePopup()
+        if not self.view().underMouse():
+            super().hidePopup()
 
     # ------------------------------------------------------------------
     # Item management
@@ -102,11 +103,22 @@ class CheckableComboBox(SearchableComboBox):
     # Checkbox interaction
     # ------------------------------------------------------------------
 
+    def _on_completer_activated(self, text: str) -> None:
+        """Toggle the checkbox for whichever item the completer just picked."""
+        for i in range(self.model.rowCount()):
+            if self.model.item(i).text() == text:
+                self._toggle_index(i)
+                break
+        self._update_text()
+
     def handle_item_pressed(self, index) -> None:
-        item = self.model.itemFromIndex(index)
+        self._toggle_index(index.row())
+        self._update_text()
+
+    def _toggle_index(self, row: int) -> None:
+        item = self.model.item(row)
         new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
         item.setCheckState(new_state)
-        self._update_text()
         self.item_toggled.emit(item.data(Qt.UserRole))
         self.selection_changed.emit(self.get_checked_data())
 
@@ -139,20 +151,10 @@ class CheckableComboBox(SearchableComboBox):
         self._update_text()
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Private
     # ------------------------------------------------------------------
 
-    def _filter_popup(self, text: str) -> None:
-        """Filter visible rows while popup is open; never calls showPopup()."""
-        if not self.view().isVisible():
-            return
-        for row in range(self.model.rowCount()):
-            item = self.model.item(row)
-            hidden = bool(text) and text.lower() not in item.text().lower()
-            self.view().setRowHidden(row, hidden)
-
     def _update_text(self) -> None:
-        """Refresh the edit-field summary without re-triggering _filter_popup."""
         items = self.get_checked_items()
         self.lineEdit().blockSignals(True)
         if not items:
