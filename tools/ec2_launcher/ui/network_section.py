@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from core.models import Subnet, Vpc
 from tools.ec2_launcher.ui.vpc_badge import VpcBadge
@@ -42,6 +42,7 @@ class NetworkSection(QWidget):
         vpc_row.addWidget(QLabel("VPC:"))
         self._vpc_combo = SearchableComboBox()
         self._vpc_combo.setMinimumWidth(320)
+        self._vpc_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         vpc_row.addWidget(self._vpc_combo)
         layout.addLayout(vpc_row)
 
@@ -51,6 +52,7 @@ class NetworkSection(QWidget):
         sn_row.addWidget(QLabel("Subnet:"))
         self._subnet_combo = SearchableComboBox()
         self._subnet_combo.setMinimumWidth(320)
+        self._subnet_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         sn_row.addWidget(self._subnet_combo)
         layout.addLayout(sn_row)
 
