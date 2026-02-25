@@ -391,20 +391,14 @@ class SecuritySection(QWidget):
         set_pref("security_splitter_sizes", self._splitter.sizes())
 
     def _on_sg_item_toggled(self, sg_id: str) -> None:
-        """Update info panel and remember last-toggled SG for copy-as-template."""
+        """Remember last-toggled SG for copy-as-template."""
         sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
         if sg is None:
             return
         self._last_sg = sg
-        self._sg_info.setText(
-            f"<b>{sg.group_name}</b><br>"
-            f"ID: {sg.group_id}<br>"
-            f"VPC: {sg.vpc_id}<br>"
-            f"{sg.description}"
-        )
 
     def _on_sg_selection_changed(self, ids: List[str]) -> None:
-        """Update the selection count label; warn if the 5-SG AWS limit is exceeded."""
+        """Update the selection count label and render details for all selected SGs."""
         n = len(ids)
         if n == 0:
             self._sg_count_lbl.setText("None selected")
@@ -419,6 +413,18 @@ class SecuritySection(QWidget):
         else:
             self._sg_count_lbl.setText(f"{n} of 5 selected")
             self._sg_count_lbl.setStyleSheet("color: #27ae60; font-size: 11px;")
+
+        # Render list of all currently selected SGs below the dropdown
+        info_html = []
+        for sg_id in ids:
+            sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
+            if sg:
+                info_html.append(
+                    f"<b>{sg.group_name}</b><br>"
+                    f"<span style='color: #6c757d; font-size: 10px;'>ID: {sg.group_id} &nbsp;|&nbsp; VPC: {sg.vpc_id}</span><br>"
+                    f"{sg.description}"
+                )
+        self._sg_info.setText("<br><br>".join(info_html))
 
     def _on_copy(self) -> None:
         """Template the last-clicked SG into the New SG form as a starting point."""
