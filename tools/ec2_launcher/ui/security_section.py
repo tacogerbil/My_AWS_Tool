@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -42,9 +41,8 @@ from PySide6.QtWidgets import (
 
 from core.models import InboundRule, KeyPair, SecurityGroup
 from tools.ec2_launcher.ui.key_pair_dialog import CreateKeyPairDialog
-from tools.ec2_launcher.ui.sg_chips import SgChipsWidget
 from ui.common.ui_prefs import get_pref, set_pref
-from ui.common.widgets import SearchableComboBox
+from ui.common.widgets import CheckableComboBox, SearchableComboBox
 
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
@@ -241,10 +239,15 @@ class SecuritySection(QWidget):
     # ------------------------------------------------------------------
 
     def populate(self, sgs: List[SecurityGroup], key_pairs: List[KeyPair]) -> None:
-        """Fill the SG chip panel and key-pair combo."""
+        """Fill the SG dropdown and key-pair combo."""
         self._all_sgs = sgs
         self._last_sg = None
-        self._sg_chips.set_groups(sgs)
+        self._sg_combo.model.clear()
+        self._sg_combo.lineEdit().clear()
+        for sg in sgs:
+            self._sg_combo.addItem(
+                f"{sg.group_id}  {sg.group_name}  {sg.description}", sg.group_id
+            )
         self._sg_count_lbl.setText("None selected")
         self._sg_count_lbl.setStyleSheet("color: #555; font-size: 11px;")
         self._sg_info.setText("")
@@ -255,13 +258,13 @@ class SecuritySection(QWidget):
         self._kp_combo.lineEdit().clear()
 
     def get_sg_ids(self) -> List[str]:
-        return self._sg_chips.get_selected_ids()
+        return self._sg_combo.get_checked_data()
 
     def get_key_name(self) -> Optional[str]:
         return self._kp_combo.currentText() or None
 
     def set_sg_ids(self, ids: List[str]) -> None:
-        self._sg_chips.set_selected_ids(ids)
+        self._sg_combo.set_checked_data(ids)
 
     def set_key_name(self, name: str) -> None:
         idx = self._kp_combo.findText(name)
@@ -324,20 +327,14 @@ class SecuritySection(QWidget):
         return box
 
     def _build_existing_sg_box(self) -> QGroupBox:
-        box = QGroupBox("Select Security Groups  (click to toggle; AWS limit: 5)")
+        box = QGroupBox("Select Security Groups  (AWS limit: 5)")
         layout = QVBoxLayout(box)
         layout.setSpacing(6)
 
-        # Chip panel — all available SGs shown as toggleable chips
-        self._sg_chips = SgChipsWidget(checkable=True)
-        scroll = QScrollArea()
-        scroll.setWidget(self._sg_chips)
-        scroll.setFixedHeight(54)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
-        layout.addWidget(scroll)
+        # Searchable, checkable dropdown
+        self._sg_combo = CheckableComboBox()
+        self._sg_combo.lineEdit().setPlaceholderText("Select security groups…")
+        layout.addWidget(self._sg_combo)
 
         # Count label + copy-as-template button
         ctrl_row = QHBoxLayout()
@@ -366,8 +363,8 @@ class SecuritySection(QWidget):
         layout.addWidget(self._sg_info)
         layout.addStretch()
 
-        self._sg_chips.chip_toggled.connect(self._on_sg_chip_toggled)
-        self._sg_chips.selection_changed.connect(self._on_sg_selection_changed)
+        self._sg_combo.item_toggled.connect(self._on_sg_item_toggled)
+        self._sg_combo.selection_changed.connect(self._on_sg_selection_changed)
         return box
 
     def _build_keypair_row(self) -> QHBoxLayout:
@@ -393,8 +390,11 @@ class SecuritySection(QWidget):
     def _on_splitter_moved(self, pos: int, index: int) -> None:
         set_pref("security_splitter_sizes", self._splitter.sizes())
 
-    def _on_sg_chip_toggled(self, sg: SecurityGroup) -> None:
-        """Update info panel and remember last-clicked SG for copy-as-template."""
+    def _on_sg_item_toggled(self, sg_id: str) -> None:
+        """Update info panel and remember last-toggled SG for copy-as-template."""
+        sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
+        if sg is None:
+            return
         self._last_sg = sg
         self._sg_info.setText(
             f"<b>{sg.group_name}</b><br>"

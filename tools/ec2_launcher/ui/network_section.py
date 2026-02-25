@@ -43,7 +43,6 @@ class NetworkSection(QWidget):
         self._vpc_combo = SearchableComboBox()
         self._vpc_combo.setMinimumWidth(320)
         vpc_row.addWidget(self._vpc_combo)
-        vpc_row.addStretch()
         layout.addLayout(vpc_row)
 
         sn_row = QHBoxLayout()
@@ -53,7 +52,6 @@ class NetworkSection(QWidget):
         self._subnet_combo = SearchableComboBox()
         self._subnet_combo.setMinimumWidth(320)
         sn_row.addWidget(self._subnet_combo)
-        sn_row.addStretch()
         layout.addLayout(sn_row)
 
         self._all_subnets: List[Subnet] = []

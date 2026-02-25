@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QComboBox, QCompleter
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 class SearchableComboBox(QComboBox):
     """
@@ -48,63 +48,113 @@ class SearchableComboBox(QComboBox):
 
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 
+
 class CheckableComboBox(SearchableComboBox):
+    """Searchable, multi-select combo with per-item checkboxes.
+
+    Signals:
+        selection_changed(list): emits list of UserRole data for all checked rows.
+        item_toggled(object):    emits the UserRole data of the last-toggled row.
     """
-    A SearchableComboBox that supports multiple selection via checkboxes.
-    """
-    def __init__(self, parent=None):
+
+    selection_changed = Signal(list)
+    item_toggled = Signal(object)
+
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.pCompleter.setCompletionMode(QCompleter.PopupCompletion)
-        self.pCompleter.setFilterMode(Qt.MatchContains)
-        
-        # Use StandardItemModel for Checkboxes
+
+        # Disable inherited completer — filtering is done in-popup via _filter_popup.
+        self.setCompleter(None)
+
+        # Replace default model with one that supports checkboxes.
         self.model = QStandardItemModel(self)
         self.setModel(self.model)
-        
-        # Keep popup open when clicking (requires custom view event filter, skipping for prototype simplicity)
-        # However, we can make it so checking an item emits signal instantly.
+
         self.view().pressed.connect(self.handle_item_pressed)
-        
-        self.checked_items = []
+        self.lineEdit().textChanged.connect(self._filter_popup)
 
-    def handle_item_pressed(self, index):
-        item = self.model.itemFromIndex(index)
-        if item.checkState() == Qt.Checked:
-            item.setCheckState(Qt.Unchecked)
-        else:
-            item.setCheckState(Qt.Checked)
-        self._update_text()
+    # ------------------------------------------------------------------
+    # Popup behaviour
+    # ------------------------------------------------------------------
 
-    def addItem(self, text, data=None):
+    def hidePopup(self) -> None:
+        """Keep popup open while the user is clicking checkboxes."""
+        if not self.view().underMouse():
+            super().hidePopup()
+
+    # ------------------------------------------------------------------
+    # Item management
+    # ------------------------------------------------------------------
+
+    def addItem(self, text: str, data=None) -> None:  # type: ignore[override]
         item = QStandardItem(text)
         item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
         item.setData(Qt.Unchecked, Qt.CheckStateRole)
+        item.setData(data, Qt.UserRole)
         self.model.appendRow(item)
-        
-    def addItems(self, texts):
+
+    def addItems(self, texts) -> None:  # type: ignore[override]
         for t in texts:
             self.addItem(t)
 
-    def _update_text(self):
-        # Collect checked items
-        items = []
+    # ------------------------------------------------------------------
+    # Checkbox interaction
+    # ------------------------------------------------------------------
+
+    def handle_item_pressed(self, index) -> None:
+        item = self.model.itemFromIndex(index)
+        new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
+        item.setCheckState(new_state)
+        self._update_text()
+        self.item_toggled.emit(item.data(Qt.UserRole))
+        self.selection_changed.emit(self.get_checked_data())
+
+    # ------------------------------------------------------------------
+    # Public query / mutation
+    # ------------------------------------------------------------------
+
+    def get_checked_items(self) -> list:
+        """Return display text of all checked rows."""
+        return [
+            self.model.item(i).text()
+            for i in range(self.model.rowCount())
+            if self.model.item(i).checkState() == Qt.Checked
+        ]
+
+    def get_checked_data(self) -> list:
+        """Return UserRole data of all checked rows."""
+        return [
+            self.model.item(i).data(Qt.UserRole)
+            for i in range(self.model.rowCount())
+            if self.model.item(i).checkState() == Qt.Checked
+        ]
+
+    def set_checked_data(self, data_list: list) -> None:
+        """Check all rows whose UserRole data appears in *data_list*."""
         for i in range(self.model.rowCount()):
             item = self.model.item(i)
-            if item.checkState() == Qt.Checked:
-                items.append(item.text())
-        
-        self.checked_items = items
-        # Show count or list
+            state = Qt.Checked if item.data(Qt.UserRole) in data_list else Qt.Unchecked
+            item.setCheckState(state)
+        self._update_text()
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _filter_popup(self, text: str) -> None:
+        """Open popup and show only rows that contain *text* (case-insensitive)."""
+        self.showPopup()
+        for row in range(self.model.rowCount()):
+            item = self.model.item(row)
+            hidden = bool(text) and text.lower() not in item.text().lower()
+            self.view().setRowHidden(row, hidden)
+
+    def _update_text(self) -> None:
+        """Refresh the edit-field summary without re-triggering _filter_popup."""
+        items = self.get_checked_items()
+        self.lineEdit().blockSignals(True)
         if not items:
             self.setEditText("")
         else:
             self.setEditText(f"{len(items)} selected: " + ", ".join(items))
-            
-    def get_checked_items(self):
-        # Return list of text for checked items
-        items = []
-        for i in range(self.model.rowCount()):
-            item = self.model.item(i)
-            if item.checkState() == Qt.Checked:
-                items.append(item.text())
-        return items
+        self.lineEdit().blockSignals(False)
