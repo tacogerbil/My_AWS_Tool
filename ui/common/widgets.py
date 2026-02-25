@@ -90,7 +90,7 @@ class CheckableComboBox(SearchableComboBox):
 
     def addItem(self, text: str, data=None) -> None:  # type: ignore[override]
         item = QStandardItem(text)
-        item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         item.setData(Qt.Unchecked, Qt.CheckStateRole)
         item.setData(data, Qt.UserRole)
         self.model.appendRow(item)
