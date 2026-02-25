@@ -211,29 +211,38 @@ class InstanceNamesSection(QWidget):
         self._count_spin.setStyleSheet("""
             QSpinBox {
                 border: 1px solid #ced4da; border-radius: 4px;
-                padding: 4px 22px 4px 8px; font-size: 13px; font-weight: bold;
+                padding: 4px 10px; font-size: 13px; font-weight: bold;
                 background: white; color: #2c3e50; min-height: 28px;
             }
+            QSpinBox:focus { border-color: #3498db; }
             QSpinBox::up-button {
-                subcontrol-origin: padding; subcontrol-position: top right;
-                width: 20px; height: 15px;
-                background: #ecf0f1;
+                subcontrol-origin: border; subcontrol-position: top right;
+                width: 20px;
+                background: #f8f9fa;
                 border-left: 1px solid #ced4da; border-bottom: 1px solid #ced4da;
                 border-top-right-radius: 3px;
+                margin: 1px 1px 0 0;
             }
-            QSpinBox::up-button:hover   { background: #d5d8dc; }
-            QSpinBox::up-button:pressed { background: #bdc3c7; }
-            QSpinBox::up-arrow   { width: 8px; height: 8px; }
+            QSpinBox::up-button:hover   { background: #e9ecef; }
+            QSpinBox::up-button:pressed { background: #dee2e6; }
+            QSpinBox::up-arrow { 
+                image: none; width: 0; height: 0; margin-bottom: 1px;
+                border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 4px solid #495057; 
+            }
             QSpinBox::down-button {
-                subcontrol-origin: padding; subcontrol-position: bottom right;
-                width: 20px; height: 15px;
-                background: #ecf0f1;
+                subcontrol-origin: border; subcontrol-position: bottom right;
+                width: 20px;
+                background: #f8f9fa;
                 border-left: 1px solid #ced4da; border-top: 1px solid #ced4da;
                 border-bottom-right-radius: 3px;
+                margin: 0 1px 1px 0;
             }
-            QSpinBox::down-button:hover   { background: #d5d8dc; }
-            QSpinBox::down-button:pressed { background: #bdc3c7; }
-            QSpinBox::down-arrow { width: 8px; height: 8px; }
+            QSpinBox::down-button:hover   { background: #e9ecef; }
+            QSpinBox::down-button:pressed { background: #dee2e6; }
+            QSpinBox::down-arrow { 
+                image: none; width: 0; height: 0; margin-top: 1px;
+                border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid #495057; 
+            }
         """)
         row.addWidget(self._count_spin)
 
