@@ -139,6 +139,36 @@ class MockAdapter(CloudProviderPort):
         self.sgs.append(sg)
         return sg
 
+    def list_instance_profiles(self) -> List[str]:
+        """Return a handful of plausible-looking mock profile names."""
+        return sorted([
+            "EC2-SSM-DomainJoin",
+            "EC2-SSM-FullAccess",
+            "EC2-CloudWatch-Agent",
+            "EC2-ReadOnly-S3",
+        ])
+
+    def create_key_pair(
+        self,
+        region: str,
+        name: str,
+        key_type: str = "rsa",
+        key_format: str = "pem",
+    ) -> "CreatedKeyPair":
+        """Mock key pair — returns obviously fake key material."""
+        from core.models import CreatedKeyPair
+        fake_material = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEowIBAAKCAQEA (MOCK KEY — not a real private key)\n"
+            "-----END RSA PRIVATE KEY-----\n"
+        )
+        return CreatedKeyPair(
+            key_name=name,
+            key_material=fake_material,
+            key_fingerprint="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99",
+            key_type=key_type,
+        )
+
     def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
         """No-op stub — mock mode never stores credentials."""
         pass

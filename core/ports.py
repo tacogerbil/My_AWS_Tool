@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from core.models import InboundRule, Instance, SecurityGroup, Subnet, Vpc
+from core.models import CreatedKeyPair, InboundRule, Instance, SecurityGroup, Subnet, Vpc
 
 if TYPE_CHECKING:
     from tools.ec2_launcher.models import LaunchConfig, LaunchResult
@@ -100,6 +100,37 @@ class CloudProviderPort(ABC):
         Returns a LaunchResult with the assigned instance IDs. On complete
         failure the result has an empty ``instance_ids`` list and a non-None
         ``error`` string.
+        """
+        pass
+
+    @abstractmethod
+    def list_instance_profiles(self) -> List[str]:
+        """List all EC2 instance profile names available in the account.
+
+        Returns a sorted list of profile names (strings).  Instance profiles
+        are the mechanism that grants EC2 instances permission to call other
+        AWS services (e.g. reading credentials from Parameter Store, or
+        accepting Systems Manager remote-desktop connections).
+        """
+        pass
+
+    @abstractmethod
+    def create_key_pair(
+        self,
+        region: str,
+        name: str,
+        key_type: str = "rsa",
+        key_format: str = "pem",
+    ) -> CreatedKeyPair:
+        """Create a new EC2 key pair and return it.
+
+        ``key_material`` in the result is the private key — available once only.
+        Callers must write it to disk immediately and discard the in-memory value.
+
+        Parameters
+        ----------
+        key_type:   "rsa" | "ed25519"
+        key_format: "pem" | "ppk"
         """
         pass
 

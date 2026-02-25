@@ -112,8 +112,24 @@ class WindowsSetupSection(QWidget):
             ssm_path    = self._ssm_path.text().strip() or "/domain/join",
             ou_dn       = ou_dn,
             description = self._description.text().strip(),
-            iam_profile = self._iam_profile.text().strip(),
+            iam_profile = self._iam_profile.currentText().strip(),
         )
+
+    def populate_profiles(self, profiles: List[str]) -> None:
+        """Populate the permission profile dropdown from the account's existing profiles."""
+        current = self._iam_profile.currentText().strip()
+        self._iam_profile.clear()
+        for name in profiles:
+            self._iam_profile.addItem(name, userData=name)
+        self._iam_profile.setCurrentIndex(-1)
+        self._iam_profile.lineEdit().clear()
+        # Restore any previously typed/selected value
+        if current:
+            idx = self._iam_profile.findText(current)
+            if idx >= 0:
+                self._iam_profile.setCurrentIndex(idx)
+            else:
+                self._iam_profile.setEditText(current)
 
     # ------------------------------------------------------------------
     # UI builders
@@ -182,13 +198,20 @@ class WindowsSetupSection(QWidget):
         self._description.setPlaceholderText(
             "Same description applied to all instances in this launch session"
         )
-        self._iam_profile = QLineEdit()
-        self._iam_profile.setPlaceholderText(
-            "IAM instance profile with ssm:GetParameter permission"
+
+        self._iam_profile = SearchableComboBox()
+        self._iam_profile.setMinimumWidth(280)
+        self._iam_profile.lineEdit().setPlaceholderText(
+            "— select or type a profile name —"
+        )
+        self._iam_profile.setToolTip(
+            "The permission profile that allows this instance to read its\n"
+            "domain credentials from secure storage on first boot.\n"
+            "Ask your administrator for the correct profile name if unsure."
         )
 
         form.addRow("Description:", self._description)
-        form.addRow("IAM Profile:", self._iam_profile)
+        form.addRow("Permission Profile:", self._iam_profile)
         return box
 
     # ------------------------------------------------------------------

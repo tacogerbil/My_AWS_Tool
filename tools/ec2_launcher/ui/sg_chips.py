@@ -96,7 +96,8 @@ class SgChipsWidget(QWidget):
     When checkable=False, chips are display-only (used in ReferencePanel).
     """
 
-    selection_changed = Signal(list)  # List[str] of selected group_ids
+    selection_changed = Signal(list)   # List[str] of selected group_ids
+    chip_toggled = Signal(object)      # SecurityGroup of the chip just clicked
 
     def __init__(self, checkable: bool = True, parent=None) -> None:
         super().__init__(parent)
@@ -139,8 +140,11 @@ class SgChipsWidget(QWidget):
     # Private
     # ------------------------------------------------------------------
 
-    def _on_chip_toggled(self, _group_id: str, _state: bool) -> None:
+    def _on_chip_toggled(self, group_id: str, _state: bool) -> None:
         self.selection_changed.emit(self.get_selected_ids())
+        chip = next((c for c in self._chips if c.group_id == group_id), None)
+        if chip:
+            self.chip_toggled.emit(chip._sg)
 
     def _clear_chips(self) -> None:
         layout = self.layout()

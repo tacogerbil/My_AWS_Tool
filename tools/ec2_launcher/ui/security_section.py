@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from core.models import InboundRule, KeyPair, SecurityGroup
 from tools.ec2_launcher.ui.key_pair_dialog import CreateKeyPairDialog
+from tools.ec2_launcher.ui.sg_chips import SgChipsWidget
 from ui.common.ui_prefs import get_pref, set_pref
 from ui.common.widgets import SearchableComboBox
 
@@ -221,6 +223,8 @@ class SecuritySection(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._all_sgs: List[SecurityGroup] = []
+        self._last_sg: Optional[SecurityGroup] = None   # last chip toggled — used for copy-as-template
+        self._service = None  # injected after data load via set_service()
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
@@ -237,15 +241,13 @@ class SecuritySection(QWidget):
     # ------------------------------------------------------------------
 
     def populate(self, sgs: List[SecurityGroup], key_pairs: List[KeyPair]) -> None:
-        """Fill the existing-SG browser and key-pair combo."""
+        """Fill the SG chip panel and key-pair combo."""
         self._all_sgs = sgs
-        self._sg_combo.clear()
-        for sg in sgs:
-            self._sg_combo.addItem(
-                f"{sg.group_name}  ({sg.group_id})", userData=sg.group_id
-            )
-        self._sg_combo.setCurrentIndex(-1)
-        self._sg_combo.lineEdit().clear()
+        self._last_sg = None
+        self._sg_chips.set_groups(sgs)
+        self._sg_count_lbl.setText("None selected")
+        self._sg_count_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        self._sg_info.setText("")
         self._kp_combo.clear()
         for kp in key_pairs:
             self._kp_combo.addItem(kp.key_name, userData=kp.key_name)
@@ -253,17 +255,13 @@ class SecuritySection(QWidget):
         self._kp_combo.lineEdit().clear()
 
     def get_sg_ids(self) -> List[str]:
-        sg_id = self._sg_combo.currentData()
-        return [sg_id] if sg_id else []
+        return self._sg_chips.get_selected_ids()
 
     def get_key_name(self) -> Optional[str]:
         return self._kp_combo.currentText() or None
 
     def set_sg_ids(self, ids: List[str]) -> None:
-        if ids:
-            idx = self._sg_combo.findData(ids[0])
-            if idx >= 0:
-                self._sg_combo.setCurrentIndex(idx)
+        self._sg_chips.set_selected_ids(ids)
 
     def set_key_name(self, name: str) -> None:
         idx = self._kp_combo.findText(name)
@@ -274,6 +272,10 @@ class SecuritySection(QWidget):
 
     def mark_error(self, has_error: bool) -> None:
         self._kp_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
+
+    def set_service(self, service) -> None:
+        """Inject the LauncherService so key pair creation can call AWS."""
+        self._service = service
 
     def has_new_sg(self) -> bool:
         """True if the New SG form has a name filled in."""
@@ -321,30 +323,37 @@ class SecuritySection(QWidget):
         layout.addWidget(self._rules_table)
         return box
 
-    def _build_arrow_btn(self) -> QPushButton:
-        btn = QPushButton("←")
-        btn.setFixedSize(34, 34)
-        btn.setToolTip("Copy selected SG settings into New SG form as template")
-        btn.setStyleSheet("""
-            QPushButton {
-                font-size: 16px; background-color: #3498db;
-                color: white; border-radius: 4px; border: none;
-            }
-            QPushButton:hover { background-color: #2980b9; }
-        """)
-        btn.clicked.connect(self._on_copy)
-        return btn
-
     def _build_existing_sg_box(self) -> QGroupBox:
-        box = QGroupBox("Select Existing Security Group")
+        box = QGroupBox("Select Security Groups  (click to toggle; AWS limit: 5)")
         layout = QVBoxLayout(box)
+        layout.setSpacing(6)
 
-        combo_row = QHBoxLayout()
-        combo_row.setSpacing(6)
-        combo_row.addWidget(self._build_arrow_btn())
-        self._sg_combo = SearchableComboBox()
-        combo_row.addWidget(self._sg_combo)
-        layout.addLayout(combo_row)
+        # Chip panel — all available SGs shown as toggleable chips
+        self._sg_chips = SgChipsWidget(checkable=True)
+        scroll = QScrollArea()
+        scroll.setWidget(self._sg_chips)
+        scroll.setFixedHeight(54)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(scroll)
+
+        # Count label + copy-as-template button
+        ctrl_row = QHBoxLayout()
+        self._sg_count_lbl = QLabel("None selected")
+        self._sg_count_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        ctrl_row.addWidget(self._sg_count_lbl)
+        ctrl_row.addStretch()
+        copy_btn = QPushButton("← Use as template")
+        copy_btn.setFixedWidth(130)
+        copy_btn.setToolTip(
+            "Copy the last-clicked SG's name, description, and rules\n"
+            "into the New Security Group form as a starting point."
+        )
+        copy_btn.clicked.connect(self._on_copy)
+        ctrl_row.addWidget(copy_btn)
+        layout.addLayout(ctrl_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -353,13 +362,12 @@ class SecuritySection(QWidget):
 
         self._sg_info = QLabel("")
         self._sg_info.setWordWrap(True)
-        self._sg_info.setStyleSheet(
-            "color: #555; font-size: 11px; padding: 4px;"
-        )
+        self._sg_info.setStyleSheet("color: #555; font-size: 11px; padding: 4px;")
         layout.addWidget(self._sg_info)
         layout.addStretch()
 
-        self._sg_combo.currentIndexChanged.connect(self._on_sg_selected)
+        self._sg_chips.chip_toggled.connect(self._on_sg_chip_toggled)
+        self._sg_chips.selection_changed.connect(self._on_sg_selection_changed)
         return box
 
     def _build_keypair_row(self) -> QHBoxLayout:
@@ -372,7 +380,7 @@ class SecuritySection(QWidget):
         row.addWidget(self._kp_combo)
         new_btn = QPushButton("Create new…")
         new_btn.setFixedWidth(110)
-        new_btn.setToolTip("Define a new key pair (AWS wiring pending)")
+        new_btn.setToolTip("Create a new key pair in AWS and download the private key")
         new_btn.clicked.connect(self._on_create_key_pair)
         row.addWidget(new_btn)
         row.addStretch()
@@ -385,34 +393,104 @@ class SecuritySection(QWidget):
     def _on_splitter_moved(self, pos: int, index: int) -> None:
         set_pref("security_splitter_sizes", self._splitter.sizes())
 
-    def _on_sg_selected(self) -> None:
-        sg_id = self._sg_combo.currentData()
-        sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
-        if sg:
-            self._sg_info.setText(
-                f"<b>{sg.group_name}</b><br>"
-                f"ID: {sg.group_id}<br>"
-                f"VPC: {sg.vpc_id}<br>"
-                f"{sg.description}"
+    def _on_sg_chip_toggled(self, sg: SecurityGroup) -> None:
+        """Update info panel and remember last-clicked SG for copy-as-template."""
+        self._last_sg = sg
+        self._sg_info.setText(
+            f"<b>{sg.group_name}</b><br>"
+            f"ID: {sg.group_id}<br>"
+            f"VPC: {sg.vpc_id}<br>"
+            f"{sg.description}"
+        )
+
+    def _on_sg_selection_changed(self, ids: List[str]) -> None:
+        """Update the selection count label; warn if the 5-SG AWS limit is exceeded."""
+        n = len(ids)
+        if n == 0:
+            self._sg_count_lbl.setText("None selected")
+            self._sg_count_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        elif n > 5:
+            self._sg_count_lbl.setText(
+                f"\u26a0  {n} selected \u2014 AWS allows a maximum of 5 per instance"
+            )
+            self._sg_count_lbl.setStyleSheet(
+                "color: #e74c3c; font-size: 11px; font-weight: bold;"
             )
         else:
-            self._sg_info.setText("")
+            self._sg_count_lbl.setText(f"{n} of 5 selected")
+            self._sg_count_lbl.setStyleSheet("color: #27ae60; font-size: 11px;")
 
     def _on_copy(self) -> None:
-        """Template the selected existing SG into the new-SG form."""
-        sg_id = self._sg_combo.currentData()
-        sg = next((s for s in self._all_sgs if s.group_id == sg_id), None)
-        if sg:
-            self._new_name.setText(f"copy-of-{sg.group_name}")
-            self._new_desc.setText(sg.description)
-            self._rules_table.populate_from_rules(sg.inbound_rules)
+        """Template the last-clicked SG into the New SG form as a starting point."""
+        if self._last_sg is None:
+            return
+        self._new_name.setText(f"copy-of-{self._last_sg.group_name}")
+        self._new_desc.setText(self._last_sg.description)
+        self._rules_table.populate_from_rules(self._last_sg.inbound_rules)
 
     def _on_create_key_pair(self) -> None:
+        """Open dialog, call AWS, prompt for save path, write private key."""
+        from PySide6.QtWidgets import QFileDialog
+
         dlg = CreateKeyPairDialog(self)
-        show_modal = getattr(dlg, 'exec')  # PySide6 .exec() via getattr — avoids hook
-        result = show_modal()
-        if result and dlg.key_name():
-            name = dlg.key_name()
-            if self._kp_combo.findText(name) < 0:
-                self._kp_combo.addItem(name, userData=name)
-            self._kp_combo.setCurrentIndex(self._kp_combo.findText(name))
+        if not dlg.exec():
+            return
+
+        name       = dlg.key_name()
+        key_type   = dlg.key_type()
+        key_format = dlg.key_format()
+        ext        = f".{key_format}"
+
+        # Prompt for save path before making the AWS call so a cancelled
+        # file dialog doesn't leave an orphaned key pair in the account.
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Private Key",
+            f"{name}{ext}",
+            f"Private Key (*{ext});;All Files (*)",
+        )
+        if not save_path:
+            return  # user cancelled — no AWS call made
+
+        if self._service is None:
+            QMessageBox.warning(
+                self, "No Connection",
+                "Cannot create a key pair: no AWS service is connected.\n"
+                "Launch the tool with valid credentials first.",
+            )
+            return
+
+        try:
+            result = self._service.create_key_pair(name, key_type, key_format)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Key Pair Creation Failed",
+                f"AWS rejected the request:\n\n{exc}",
+            )
+            return
+
+        # Write private key — this is the only opportunity to capture it.
+        try:
+            import os
+            with open(save_path, "w", encoding="utf-8") as fh:
+                fh.write(result.key_material)
+            os.chmod(save_path, 0o600)  # owner read/write only
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "File Save Failed",
+                f"Key pair was created in AWS but could not be saved to disk:\n\n{exc}\n\n"
+                "The key pair exists in your account. Delete it from the AWS console "
+                "if you cannot recover the private key.",
+            )
+            return
+
+        QMessageBox.information(
+            self, "Key Pair Created",
+            f"Key pair <b>{name}</b> created successfully.\n\n"
+            f"Private key saved to:\n{save_path}\n\n"
+            "Keep this file secure. AWS will not give you the private key again.",
+        )
+
+        if self._kp_combo.findText(name) < 0:
+            self._kp_combo.addItem(name, userData=name)
+        self._kp_combo.setCurrentIndex(self._kp_combo.findText(name))

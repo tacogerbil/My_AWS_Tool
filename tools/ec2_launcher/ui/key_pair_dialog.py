@@ -2,12 +2,12 @@
 key_pair_dialog.py — "Create new key pair" dialog.
 
 Mirrors the AWS console workflow: name, key type, file format.
-The actual CreateKeyPair API call is deferred (wiring pending); the dialog
-captures the desired parameters and shows a confirmation message.
 
 Public API:
     CreateKeyPairDialog(parent) — QDialog, call .exec()
-    .key_name() -> str          — name entered by the user
+    .key_name()   -> str   — name the user typed
+    .key_type()   -> str   — "rsa" | "ed25519"
+    .key_format() -> str   — "pem" | "ppk"
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QRadioButton,
     QVBoxLayout,
-    QHBoxLayout,
 )
 
 _FIELD_STYLE = """
@@ -43,7 +42,7 @@ _SECTION_STYLE = """
 
 
 class CreateKeyPairDialog(QDialog):
-    """Create-key-pair dialog (AWS wiring deferred)."""
+    """Collect key pair parameters; caller handles the AWS call and file save."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -64,8 +63,8 @@ class CreateKeyPairDialog(QDialog):
         layout.addWidget(self._build_radio_group(
             title="<b>Key pair type</b>",
             options=[
-                ("RSA",     "RSA — compatible with all SSH clients"),
-                ("ED25519", "ED25519 — more secure; not supported on Windows Server 2019 and older"),
+                ("rsa",     "RSA",     "Compatible with all SSH clients"),
+                ("ed25519", "ED25519", "More secure; not supported on Windows Server 2019 and older"),
             ],
             attr="_ktype_group",
         ))
@@ -73,15 +72,15 @@ class CreateKeyPairDialog(QDialog):
         layout.addWidget(self._build_radio_group(
             title="<b>Private key file format</b>",
             options=[
-                (".pem", ".pem — for use with OpenSSH / Linux / macOS"),
-                (".ppk", ".ppk — for use with PuTTY on Windows"),
+                ("pem", ".pem", "For use with OpenSSH / Linux / macOS"),
+                ("ppk", ".ppk", "For use with PuTTY on Windows"),
             ],
             attr="_fmt_group",
         ))
 
         note = QLabel(
-            "<i>Note: AWS wiring is pending. The key pair name has been captured "
-            "and will be created when launch integration is complete.</i>"
+            "<i>The private key will be downloaded once and cannot be retrieved "
+            "again. Store it securely.</i>"
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #6c757d; font-size: 11px;")
@@ -100,11 +99,27 @@ class CreateKeyPairDialog(QDialog):
     def key_name(self) -> str:
         return self._name_edit.text().strip()
 
+    def key_type(self) -> str:
+        """Return "rsa" or "ed25519"."""
+        checked = self._ktype_group.checkedButton()
+        return checked.property("value") if checked else "rsa"
+
+    def key_format(self) -> str:
+        """Return "pem" or "ppk"."""
+        checked = self._fmt_group.checkedButton()
+        return checked.property("value") if checked else "pem"
+
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
 
     def _build_radio_group(self, title: str, options: list, attr: str) -> QFrame:
+        """Build a labeled radio-button group.
+
+        ``options`` is a list of (value, label, description) tuples.
+        The first option is pre-selected.  Each QRadioButton stores its
+        value via a dynamic property so key_type() / key_format() can read it.
+        """
         frame = QFrame()
         frame.setStyleSheet(_SECTION_STYLE)
         fl = QVBoxLayout(frame)
@@ -114,15 +129,19 @@ class CreateKeyPairDialog(QDialog):
 
         group = QButtonGroup(frame)
         group.setExclusive(True)
-        for i, (label, desc) in enumerate(options):
-            row = QHBoxLayout()
+        for i, (value, label, desc) in enumerate(options):
             rb = QRadioButton(label)
+            rb.setProperty("value", value)
             if i == 0:
                 rb.setChecked(True)
             group.addButton(rb)
-            row.addWidget(rb)
+
             desc_lbl = QLabel(desc)
             desc_lbl.setStyleSheet("color: #6c757d; font-size: 11px;")
+
+            from PySide6.QtWidgets import QHBoxLayout
+            row = QHBoxLayout()
+            row.addWidget(rb)
             row.addWidget(desc_lbl)
             row.addStretch()
             fl.addLayout(row)
@@ -131,14 +150,7 @@ class CreateKeyPairDialog(QDialog):
         return frame
 
     def _on_accept(self) -> None:
-        name = self._name_edit.text().strip()
-        if not name:
+        if not self._name_edit.text().strip():
             QMessageBox.warning(self, "Validation", "Key pair name is required.")
             return
-        QMessageBox.information(
-            self,
-            "Key Pair Queued",
-            f"Key pair <b>{name}</b> will be created when launch is executed.\n\n"
-            "AWS wiring is pending; your chosen name has been captured.",
-        )
         self.accept()

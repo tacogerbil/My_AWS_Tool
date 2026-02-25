@@ -224,6 +224,28 @@ class LauncherService:
             logger.error("Failed to create SG '%s': %s", name, exc)
             raise
 
+    def list_instance_profiles(self) -> List[str]:
+        """Return all IAM instance profile names available in the account."""
+        try:
+            return self.adapter.list_instance_profiles()
+        except Exception as exc:
+            logger.error("Error listing instance profiles: %s", exc)
+            return []
+
+    def create_key_pair(
+        self,
+        name: str,
+        key_type: str = "rsa",
+        key_format: str = "pem",
+    ) -> "CreatedKeyPair":
+        """Create a new EC2 key pair and return the private key material.
+
+        The private key is returned exactly once — caller must write it to disk
+        and discard the in-memory value immediately after.
+        """
+        from core.models import CreatedKeyPair  # noqa: F401 — type hint only
+        return self.adapter.create_key_pair(self.region, name, key_type, key_format)
+
     def store_domain_credentials(self, ssm_path: str, username: str, password: str) -> None:
         """Write domain join credentials to SSM Parameter Store as SecureStrings.
 

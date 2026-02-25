@@ -278,6 +278,24 @@ class AwsAdapter(CloudProviderPort):
             logger.error(f"Error listing AMIs: {e}")
             return []
 
+    def list_instance_profiles(self) -> List[str]:
+        """Return sorted list of IAM instance profile names for the account.
+
+        Uses a paginator so accounts with many profiles are handled correctly.
+        IAM is a global service — no region parameter needed.
+        """
+        try:
+            iam = self.session.client("iam")
+            paginator = iam.get_paginator("list_instance_profiles")
+            names: List[str] = []
+            for page in paginator.paginate():
+                for profile in page.get("InstanceProfiles", []):
+                    names.append(profile["InstanceProfileName"])
+            return sorted(names)
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Error listing instance profiles: %s", exc)
+            return []
+
     def list_key_pairs(self, region: str) -> List[KeyPair]:
         try:
             if region != self.session.region_name:
@@ -291,6 +309,33 @@ class AwsAdapter(CloudProviderPort):
         except (ClientError, BotoCoreError) as e:
             logger.error(f"Error listing Key Pairs: {e}")
             return []
+
+    def create_key_pair(
+        self,
+        region: str,
+        name: str,
+        key_type: str = "rsa",
+        key_format: str = "pem",
+    ) -> "CreatedKeyPair":
+        """Create a new EC2 key pair and return the private key material.
+
+        The private key is returned exactly once by AWS and is not stored
+        anywhere in this adapter.  Callers must write it to disk immediately.
+        """
+        from core.models import CreatedKeyPair
+        if region != self.session.region_name:
+            self.ec2 = self.session.client("ec2", region_name=region)
+        response = self.ec2.create_key_pair(
+            KeyName=name,
+            KeyType=key_type,
+            KeyFormat=key_format,
+        )
+        return CreatedKeyPair(
+            key_name=response["KeyName"],
+            key_material=response["KeyMaterial"],
+            key_fingerprint=response.get("KeyFingerprint", ""),
+            key_type=key_type,
+        )
 
     def validate_connection(self) -> bool:
         try:

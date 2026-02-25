@@ -125,9 +125,12 @@ class LauncherWindow(QWidget):
             key_pairs = self._service.list_key_pairs()
             instances = self._service.list_instances_for_cloning()
 
+            profiles = self._service.list_instance_profiles()
             self._config_form.set_data(
                 my_amis, quick_start_amis, instance_types, vpcs, subnets, sgs, key_pairs
             )
+            self._config_form.set_service(self._service)
+            self._config_form.set_instance_profiles(profiles)
             self._reference_panel.set_instances(instances)
         except Exception as exc:
             logger.error("Failed to load AWS data: %s", exc)
@@ -279,6 +282,11 @@ class LauncherWindow(QWidget):
         self._config_form.set_data(
             amis, quick_start_amis, MOCK_INSTANCE_TYPES, vpcs, subnets, sgs, key_pairs
         )
+        from adapters.mock_adapter import MockAdapter
+        from tools.ec2_launcher.services import LauncherService
+        mock_svc = LauncherService(MockAdapter(), region="us-east-1")
+        self._config_form.set_service(mock_svc)
+        self._config_form.set_instance_profiles(mock_svc.list_instance_profiles())
         self._reference_panel.set_instances(mock_instances)
 
     # ------------------------------------------------------------------

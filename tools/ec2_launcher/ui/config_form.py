@@ -285,6 +285,14 @@ class ConfigForm(QScrollArea):
             missing.append("Key Pair")
         return missing
 
+    def set_service(self, service) -> None:
+        """Inject the LauncherService so sub-sections can make AWS calls (e.g. key pair creation)."""
+        self._security.set_service(service)
+
+    def set_instance_profiles(self, profiles: List[str]) -> None:
+        """Populate the permission profile dropdown in the Windows Setup section."""
+        self._windows.populate_profiles(profiles)
+
     def get_domain_config(self):
         """Return WindowsDomainConfig if Windows Setup is filled, else None."""
         return self._windows.get_domain_config()

@@ -85,6 +85,20 @@ class KeyPair:
 
 
 @dataclass
+class CreatedKeyPair:
+    """Result of a create_key_pair call.
+
+    ``key_material`` is the private key PEM/PPK string returned by AWS —
+    it is only available at creation time and is never stored by the adapter.
+    Callers must write it to disk and then discard the in-memory copy.
+    """
+    key_name: str
+    key_material: str  # PEM or PPK — available once, at creation time only
+    key_fingerprint: str
+    key_type: str      # "rsa" | "ed25519"
+
+
+@dataclass
 class OrgUnit:
     """An Active Directory Organizational Unit or Container."""
     name: str                # Display name, e.g. "Prod"
