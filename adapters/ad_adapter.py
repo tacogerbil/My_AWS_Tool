@@ -39,8 +39,33 @@ def _ldap_connect(
         from ldap3 import ALL, NTLM, Connection, Server
     except ImportError as exc:
         raise RuntimeError(
-            "ldap3 is required for AD queries.  Install it: pip install ldap3"
+            "ldap3 is required for AD queries. Install it: pip install ldap3"
         ) from exc
+
+    import hashlib
+    try:
+        hashlib.new("md4", b"")
+    except ValueError:
+        # Python 3.10+ / OpenSSL 3.0+ disables MD4 completely, which breaks NTLM.
+        # We monkeypatch hashlib.new to use pycryptodome's MD4 fallback instead.
+        try:
+            from Crypto.Hash import MD4
+
+            _orig_new = hashlib.new
+
+            def _hashlib_new_patch(name, data=b""):
+                if name.lower() == "md4":
+                    return MD4.new(data)
+                return _orig_new(name, data)
+
+            hashlib.new = _hashlib_new_patch
+        except ImportError as exc:
+            raise RuntimeError(
+                "Your Python version's OpenSSL lacks MD4, which is strictly required "
+                "for NTLM authentication to Active Directory.\n\n"
+                "Please run:  pip install pycryptodome\n\n"
+                "This will provide a pure-Python fallback automatically."
+            ) from exc
 
     base_dn = "DC=" + ",DC=".join(domain.split("."))
     logger.debug("LDAP connect: host=%s base_dn=%s user=%s", dc_host, base_dn, username)
