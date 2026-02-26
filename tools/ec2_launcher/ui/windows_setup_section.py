@@ -21,9 +21,10 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -100,7 +101,9 @@ class WindowsSetupSection(QWidget):
     def get_domain_config(self) -> Optional[WindowsDomainConfig]:
         """Return WindowsDomainConfig if domain + OU are filled, else None."""
         domain  = self._domain.text().strip()
-        ou_dn   = self._ou_combo.currentData()
+        item    = self._ou_tree.currentItem()
+        ou_dn   = item.data(0, Qt.UserRole) if item else None
+        
         if not domain or not ou_dn:
             return None
         return WindowsDomainConfig(
@@ -188,11 +191,18 @@ class WindowsSetupSection(QWidget):
         query_row.addStretch()
         layout.addLayout(query_row)
 
-        self._ou_combo = SearchableComboBox()
-        self._ou_combo.setMinimumWidth(400)
-        self._ou_combo.setCurrentIndex(-1)
-        self._ou_combo.lineEdit().setPlaceholderText("— query AD to populate —")
-        layout.addWidget(self._ou_combo)
+        self._ou_search = QLineEdit()
+        self._ou_search.setPlaceholderText("Filter OUs...")
+        self._ou_search.textChanged.connect(self._on_ou_filter_changed)
+        layout.addWidget(self._ou_search)
+
+        self._ou_tree = QTreeWidget()
+        self._ou_tree.setHeaderHidden(True)
+        self._ou_tree.setMinimumHeight(200)
+        self._ou_tree.setStyleSheet(
+            "QTreeWidget { border: 1px solid #ced4da; border-radius: 4px; padding: 4px; }"
+        )
+        layout.addWidget(self._ou_tree)
 
         return box
 
@@ -256,16 +266,55 @@ class WindowsSetupSection(QWidget):
 
     def _on_query_result(self, ous: List[OrgUnit]) -> None:
         self._ous = ous
-        self._ou_combo.clear()
+        self._ou_tree.clear()
+        
+        nodes: dict[str, QTreeWidgetItem] = {}
+        
         for ou in ous:
-            indent = "  " * ou.depth
-            icon   = "📁" if ou.object_class == "container" else "🗂"
-            label  = f"{indent}{icon} {ou.name}"
-            self._ou_combo.addItem(label, userData=ou.distinguished_name)
-        self._ou_combo.setCurrentIndex(-1)
-        self._ou_combo.lineEdit().clear()
-        self._ou_combo.lineEdit().setPlaceholderText("— select OU / Container —")
+            dn = ou.distinguished_name
+            # AD paths are like "OU=Child,OU=Parent,DC=corp,DC=local"
+            # Parent DN is everything after the first comma
+            idx = dn.find(",")
+            parent_dn = dn[idx+1:] if idx != -1 else ""
+            
+            icon  = "📁" if ou.object_class == "container" else "🗂"
+            label = f"{icon} {ou.name}"
+            
+            item = QTreeWidgetItem([label])
+            item.setData(0, Qt.UserRole, dn)
+            
+            parent_item = nodes.get(parent_dn.upper())
+            if parent_item:
+                parent_item.addChild(item)
+            else:
+                self._ou_tree.addTopLevelItem(item)
+                
+            nodes[dn.upper()] = item
+
+        self._ou_tree.expandAll()
         self._status_lbl.setText(_STATUS_OK_TPL.format(n=len(ous)))
+
+    def _on_ou_filter_changed(self, text: str) -> None:
+        text = text.lower()
+        
+        def filter_node(item: QTreeWidgetItem) -> bool:
+            matches = text in item.text(0).lower()
+            any_child_visible = False
+            for i in range(item.childCount()):
+                child = item.child(i)
+                if filter_node(child):
+                    any_child_visible = True
+                    
+            visible = matches or any_child_visible
+            item.setHidden(not visible)
+            
+            if text and any_child_visible:
+                item.setExpanded(True)
+                
+            return visible
+
+        for i in range(self._ou_tree.topLevelItemCount()):
+            filter_node(self._ou_tree.topLevelItem(i))
 
     def _on_query_error(self, msg: str) -> None:
         self._status_lbl.setText(_STATUS_ERR_TPL.format(msg=msg))
