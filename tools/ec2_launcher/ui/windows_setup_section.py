@@ -107,6 +107,8 @@ class WindowsSetupSection(QWidget):
         
         if not domain or not ou_dn:
             return None
+        iam_profile_text = self._iam_profile.currentText().strip()
+        
         return WindowsDomainConfig(
             enabled     = True,
             domain      = domain,
@@ -116,7 +118,7 @@ class WindowsSetupSection(QWidget):
             ssm_path    = self._ssm_path.text().strip() or "/domain/join",
             ou_dn       = ou_dn,
             description = self._description.text().strip(),
-            iam_profile = self._iam_profile.currentText().strip(),
+            iam_profile = iam_profile_text if iam_profile_text else None,
         )
 
     def populate_profiles(self, profiles: List[str]) -> None:
@@ -223,12 +225,13 @@ class WindowsSetupSection(QWidget):
         self._iam_profile = SearchableComboBox()
         self._iam_profile.setMinimumWidth(280)
         self._iam_profile.lineEdit().setPlaceholderText(
-            "— select or type a profile name —"
+            "— select name, paste ARN, or leave blank —"
         )
         self._iam_profile.setToolTip(
-            "The permission profile that allows this instance to read its\n"
-            "domain credentials from secure storage on first boot.\n"
-            "Ask your administrator for the correct profile name if unsure."
+            "Optional: The permission profile that allows this instance to read its\n"
+            "domain credentials from secure storage on first boot.\n\n"
+            "If your profile isn't listed, you can paste its full ARN here.\n"
+            "If left blank, the instance will not perform an automated domain join."
         )
 
         form.addRow("Description:", self._description)

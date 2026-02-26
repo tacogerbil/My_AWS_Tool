@@ -511,7 +511,10 @@ class AwsAdapter(CloudProviderPort):
                 if userdata:
                     kwargs["UserData"] = userdata
                 if config.iam_instance_profile:
-                    kwargs["IamInstanceProfile"] = {"Name": config.iam_instance_profile}
+                    if config.iam_instance_profile.startswith("arn:aws:iam::"):
+                        kwargs["IamInstanceProfile"] = {"Arn": config.iam_instance_profile}
+                    else:
+                        kwargs["IamInstanceProfile"] = {"Name": config.iam_instance_profile}
                 resp = self.ec2.run_instances(**kwargs)
                 iid = resp["Instances"][0]["InstanceId"]
                 launched_ids.append(iid)

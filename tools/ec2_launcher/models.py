@@ -74,7 +74,7 @@ class WindowsDomainConfig:
     ssm_path: str = "/domain/join"   # SSM path prefix for credentials
     ou_dn: str = ""           # Full DN of target OU/Container
     description: str = ""     # AD computer object description (post-join)
-    iam_profile: str = ""     # IAM instance profile name for SSM access
+    iam_profile: Optional[str] = None     # IAM instance profile name or ARN for SSM access
 
 
 @dataclass
