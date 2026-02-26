@@ -136,17 +136,19 @@ class WindowsSetupSection(QWidget):
     # ------------------------------------------------------------------
 
     def _build_credentials_group(self) -> QGroupBox:
+        from ui.common.ui_prefs import get_pref, set_pref
+    
         box = QGroupBox("Credentials")
         form = QFormLayout(box)
         form.setLabelAlignment(Qt.AlignRight)
 
-        self._domain   = QLineEdit(); self._domain.setPlaceholderText("corp.example.com")
-        self._dc_host  = QLineEdit(); self._dc_host.setPlaceholderText("dc01.corp.example.com")
-        self._username = QLineEdit(); self._username.setPlaceholderText("CORP\\svc-domain-join")
+        self._domain   = QLineEdit(get_pref("win_domain", "")); self._domain.setPlaceholderText("corp.example.com")
+        self._dc_host  = QLineEdit(get_pref("win_dchost", "")); self._dc_host.setPlaceholderText("dc01.corp.example.com")
+        self._username = QLineEdit(get_pref("win_user", "")); self._username.setPlaceholderText("CORP\\svc-domain-join")
         self._password = QLineEdit(); self._password.setEchoMode(QLineEdit.Password)
         self._password.setPlaceholderText("stored to SSM at launch — never written to disk")
 
-        self._ssm_path = QLineEdit("/domain/join")
+        self._ssm_path = QLineEdit(get_pref("win_ssm", "/domain/join"))
         self._ssm_path.setToolTip(
             "SSM Parameter Store path prefix.\n"
             "Credentials are stored as:\n"
@@ -154,6 +156,11 @@ class WindowsSetupSection(QWidget):
             "  {path}/password  (SecureString)\n"
             "Encrypted at rest by KMS.  Access controlled by IAM."
         )
+
+        self._domain.textChanged.connect(lambda t: set_pref("win_domain", t))
+        self._dc_host.textChanged.connect(lambda t: set_pref("win_dchost", t))
+        self._username.textChanged.connect(lambda t: set_pref("win_user", t))
+        self._ssm_path.textChanged.connect(lambda t: set_pref("win_ssm", t))
 
         for label, widget in [
             ("Domain:", self._domain),
@@ -190,14 +197,17 @@ class WindowsSetupSection(QWidget):
         return box
 
     def _build_computer_group(self) -> QGroupBox:
+        from ui.common.ui_prefs import get_pref, set_pref
+
         box = QGroupBox("Computer Object")
         form = QFormLayout(box)
         form.setLabelAlignment(Qt.AlignRight)
 
-        self._description = QLineEdit()
+        self._description = QLineEdit(get_pref("win_desc", ""))
         self._description.setPlaceholderText(
             "Same description applied to all instances in this launch session"
         )
+        self._description.textChanged.connect(lambda t: set_pref("win_desc", t))
 
         self._iam_profile = SearchableComboBox()
         self._iam_profile.setMinimumWidth(280)

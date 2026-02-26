@@ -79,7 +79,7 @@ def _ldap_connect(
     else:
         formatted_username = username
 
-    server = Server(dc_host, get_info=ALL)
+    server = Server(dc_host, port=636, use_ssl=True, get_info=ALL)
     conn = Connection(
         server,
         user=formatted_username,
