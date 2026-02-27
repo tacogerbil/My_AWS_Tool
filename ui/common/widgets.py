@@ -22,8 +22,11 @@ class SearchableComboBox(QComboBox):
         self.pCompleter.setModel(self.model())
         self.setCompleter(self.pCompleter)
 
-        # Always show text from the beginning (left), not the end
         self.currentIndexChanged.connect(self._reset_cursor)
+        
+        # Windows sometimes renders the popup view transparent
+        self.setStyleSheet("QComboBox QAbstractItemView { background-color: #ffffff; color: #000000; selection-background-color: #e0e0e0; }")
+        self.view().setStyleSheet("background-color: #ffffff; color: #000000;")
 
     def setModel(self, model):
         super().setModel(model)

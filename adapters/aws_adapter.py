@@ -404,7 +404,9 @@ class AwsAdapter(CloudProviderPort):
 
     def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
         """Write credentials to SSM Parameter Store as KMS-encrypted SecureStrings."""
-        ssm = self.session.client("ssm", region_name=region)
+        from botocore.config import Config
+        boto_config = Config(connect_timeout=5, read_timeout=5)
+        ssm = self.session.client("ssm", region_name=region, config=boto_config)
         for name, value in params.items():
             ssm.put_parameter(
                 Name=name,
