@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
-from core.models import CreatedKeyPair, InboundRule, Instance, SecurityGroup, Subnet, Vpc
+from core.models import (
+    CreatedKeyPair,
+    InboundRule,
+    Instance,
+    InstanceTypeInfo,
+    SecurityGroup,
+    Subnet,
+    Vpc,
+)
 
 if TYPE_CHECKING:
     from tools.ec2_launcher.models import LaunchConfig, LaunchResult
+
+
+@runtime_checkable
+class VmImportPort(Protocol):
+    """Minimal contract that callers of get_import_orchestrator depend on.
+
+    Concrete implementations live in tools/vm_importer/services.py.
+    Defined here as a Protocol so the adapter need not import service types.
+    """
+
+    def import_vm(self, *args: Any, **kwargs: Any) -> Any: ...
 
 class CloudProviderPort(ABC):
     """
@@ -30,9 +49,22 @@ class CloudProviderPort(ABC):
         pass
 
     @abstractmethod
-    def describe_instances(self, region: str, instance_ids: Optional[List[str]] = None, tag_filters: Optional[List[Dict[str, str]]] = None) -> List[Instance]:
-        """Describe EC2 instances."""
-        pass
+    def describe_instances(
+        self,
+        region: str,
+        instance_ids: Optional[List[str]] = None,
+        tag_filters: Optional[List[Dict[str, str]]] = None,
+        states: Optional[List[str]] = None,
+    ) -> List[Instance]:
+        """Describe EC2 instances.
+
+        Parameters
+        ----------
+        states:
+            Optional list of instance state names to filter by
+            (e.g. ``['running', 'stopped']``).  When ``None`` the adapter
+            returns all states — callers are responsible for filtering.
+        """
 
     @abstractmethod
     def list_amis(
@@ -60,20 +92,16 @@ class CloudProviderPort(ABC):
         pass
 
     @abstractmethod
-    def get_import_orchestrator(self) -> Any:
-        """
-        Returns an object capable of orchestrating VM imports.
-        Use Any to avoid circular imports with Service layer types if necessary, 
-        or define a Protocol. For now, strict MCCC asks for Explicit Interfaces,
-        but we can keep it loose at the Port level or import the Service type if cleanly separated.
-        """
+    def get_import_orchestrator(self) -> VmImportPort:
+        """Return an object that satisfies VmImportPort (VM import orchestrator)."""
         pass
 
     @abstractmethod
-    def get_instance_type_info(self, instance_type: str) -> dict:
-        """
-        Returns metadata for an instance type.
-        Result dict keys: 'vCPU', 'MemoryMiB', 'Label'
+    def get_instance_type_info(self, instance_type: str) -> InstanceTypeInfo:
+        """Return structured metadata for an instance type.
+
+        Result is a typed ``InstanceTypeInfo`` dataclass — no raw dicts cross
+        the adapter boundary.
         """
         pass
     @abstractmethod

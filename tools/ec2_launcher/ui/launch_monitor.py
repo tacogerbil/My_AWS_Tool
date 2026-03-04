@@ -17,6 +17,7 @@ No business logic; all AWS I/O delegated to the injected service layer.
 from __future__ import annotations
 
 import logging
+import time
 import webbrowser
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -45,9 +46,11 @@ logger = logging.getLogger(__name__)
 # Internal constants
 # ---------------------------------------------------------------------------
 
-_POLL_INTERVAL_MS = 5_000   # 5 seconds between describe_instances polls
-_TERMINAL_STATES  = {"running", "terminated", "stopped", "shutting-down"}
-_FAILED_STATES    = {"terminated", "shutting-down"}
+_POLL_INTERVAL_MS   = 5_000   # 5 seconds between describe_instances polls
+_ELAPSED_INTERVAL_MS = 1_000  # 1 second elapsed timer refresh
+_TERMINAL_STATES    = {"running", "terminated", "stopped", "shutting-down"}
+_FAILED_STATES      = {"terminated", "shutting-down"}
+_DOMAIN_JOIN_TAG    = "DomainJoinStatus"
 
 _PALETTE = {
     "bg":       "#1a1f2e",
@@ -158,18 +161,22 @@ class _InstanceRow(QFrame):
 
     def __init__(self, name: str, instance_id: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._instance_id = instance_id
-        self._name        = name
-        self._region      = ""
+        self._instance_id  = instance_id
+        self._name         = name
+        self._region       = ""
+        self._start_time   = time.monotonic()
+        self._reached_running_s: Optional[float] = None
 
         self.setStyleSheet(
             f"QFrame {{ background-color: {_PALETTE['card']}; "
             f"border: 1px solid {_PALETTE['border']}; border-radius: 6px; }}"
         )
-        self.setFixedHeight(68)
 
-        row = QHBoxLayout(self)
-        row.setContentsMargins(14, 8, 14, 8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 8, 14, 6)
+        outer.setSpacing(3)
+
+        row = QHBoxLayout()
         row.setSpacing(12)
 
         # State icon
@@ -208,6 +215,15 @@ class _InstanceRow(QFrame):
         )
         row.addWidget(self._ip_lbl)
 
+        # Time-to-running
+        self._time_lbl = QLabel("—")
+        self._time_lbl.setFixedWidth(55)
+        self._time_lbl.setAlignment(Qt.AlignCenter)
+        self._time_lbl.setStyleSheet(
+            f"font-size: 11px; color: {_PALETTE['subtext']}; border: none;"
+        )
+        row.addWidget(self._time_lbl)
+
         # Open in Console button
         self._console_btn = QPushButton("🔗 Console")
         self._console_btn.setFixedWidth(90)
@@ -215,6 +231,17 @@ class _InstanceRow(QFrame):
         self._console_btn.setToolTip("Open this instance in the AWS Console")
         self._console_btn.clicked.connect(self._open_in_console)
         row.addWidget(self._console_btn)
+
+        outer.addLayout(row)
+
+        # Domain join status sub-label (hidden until a tag arrives)
+        self._dj_lbl = QLabel("")
+        self._dj_lbl.setStyleSheet(
+            f"font-size: 11px; color: {_PALETTE['accent']}; "
+            f"padding-left: 34px; border: none;"
+        )
+        self._dj_lbl.setVisible(False)
+        outer.addWidget(self._dj_lbl)
 
     # ------------------------------------------------------------------
 
@@ -228,11 +255,32 @@ class _InstanceRow(QFrame):
         self._ip_lbl.setText(inst.private_ip or "—")
         self._console_btn.setEnabled(state == "running")
 
+        # Record time when instance first reaches 'running'
+        if state == "running" and self._reached_running_s is None:
+            self._reached_running_s = time.monotonic() - self._start_time
+            self._time_lbl.setText(f"{self._reached_running_s:.0f}s")
+            self._time_lbl.setStyleSheet(
+                f"font-size: 11px; color: {_PALETTE['success']}; "
+                "font-weight: 700; border: none;"
+            )
+
+        # Update domain join status tag sub-label
+        dj_status = _get_tag(inst, _DOMAIN_JOIN_TAG)
+        if dj_status:
+            self._dj_lbl.setText(f"🔗 {dj_status}")
+            self._dj_lbl.setVisible(True)
+
     def mark_error(self, message: str) -> None:
         self._icon_lbl.setText("❌")
         self._state_badge.setText("error")
         self._state_badge.setStyleSheet(self._badge_style("error"))
         self._id_lbl.setText(message[:60])
+
+    def reset_start_time(self) -> None:
+        """Reset the per-instance start clock (called when real ID is assigned)."""
+        self._start_time = time.monotonic()
+        self._reached_running_s = None
+        self._time_lbl.setText("—")
 
     # ------------------------------------------------------------------
 
@@ -252,6 +300,18 @@ class _InstanceRow(QFrame):
             f"#Instances:instanceId={self._instance_id}"
         )
         webbrowser.open(url)
+
+
+# ---------------------------------------------------------------------------
+# Pure helper
+# ---------------------------------------------------------------------------
+
+def _get_tag(inst: "Instance", key: str) -> Optional[str]:
+    """Return the value of a tag by key, or None if not present."""
+    for tag in (inst.tags or []):
+        if tag.key == key:
+            return tag.value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +339,8 @@ class LaunchMonitorDialog(QDialog):
         self._result: Optional[LaunchResult] = None
         self._rows: Dict[str, _InstanceRow] = {}   # instance_id → row widget
         self._timer         = QTimer(self)
+        self._elapsed_timer = QTimer(self)
+        self._launch_start  = time.monotonic()
         self._thread: Optional[QThread] = None
         self._worker: Optional[LaunchWorker] = None
 
@@ -288,6 +350,7 @@ class LaunchMonitorDialog(QDialog):
         self.setStyleSheet(_DIALOG_STYLE)
 
         self._build_ui()
+        self._start_elapsed_timer()
         self._start_launch()
 
     # ------------------------------------------------------------------
@@ -318,6 +381,13 @@ class LaunchMonitorDialog(QDialog):
         )
         row.addWidget(title)
         row.addStretch()
+
+        # Live elapsed timer label
+        self._elapsed_lbl = QLabel("Elapsed: 0:00")
+        self._elapsed_lbl.setStyleSheet(
+            f"font-size: 12px; color: {_PALETTE['subtext']}; font-family: Consolas, monospace;"
+        )
+        row.addWidget(self._elapsed_lbl)
 
         meta = QLabel(
             f"AMI: <b>{self._config.image_id}</b>  ·  "
@@ -380,7 +450,7 @@ class LaunchMonitorDialog(QDialog):
         row.setContentsMargins(0, 0, 0, 0)
 
         self._auto_close_chk = QCheckBox("Auto-close when all instances are running")
-        self._auto_close_chk.setChecked(True)
+        self._auto_close_chk.setChecked(False)  # Default: OFF — stay open so user can review
         row.addWidget(self._auto_close_chk)
         row.addStretch()
 
@@ -422,6 +492,21 @@ class LaunchMonitorDialog(QDialog):
         self._thread.start()
 
     # ------------------------------------------------------------------
+    # Elapsed timer helpers
+    # ------------------------------------------------------------------
+
+    def _start_elapsed_timer(self) -> None:
+        """Start the 1-second header clock showing total elapsed time."""
+        self._elapsed_timer.setInterval(_ELAPSED_INTERVAL_MS)
+        self._elapsed_timer.timeout.connect(self._update_elapsed)
+        self._elapsed_timer.start()
+
+    def _update_elapsed(self) -> None:
+        elapsed = int(time.monotonic() - self._launch_start)
+        m, s = divmod(elapsed, 60)
+        self._elapsed_lbl.setText(f"Elapsed: {m}:{s:02d}")
+
+    # ------------------------------------------------------------------
     # Signal handlers
     # ------------------------------------------------------------------
 
@@ -442,6 +527,7 @@ class LaunchMonitorDialog(QDialog):
                 row = placeholder_rows[i]
                 row._id_lbl.setText(iid)
                 row._instance_id = iid
+                row.reset_start_time()  # clock starts when real ID is assigned
             else:
                 # More instances than placeholders (shouldn't happen, but be safe)
                 row = _InstanceRow(name=name, instance_id=iid)
@@ -516,10 +602,11 @@ class LaunchMonitorDialog(QDialog):
 
         if all_terminal:
             self._timer.stop()
+            self._elapsed_timer.stop()
             self._log_event("🎉 All instances have reached a terminal state.")
             if self._auto_close_chk.isChecked():
                 self._log_event("Auto-closing dialog…")
-                QTimer.singleShot(1500, self.accept)
+                self.accept()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -535,6 +622,7 @@ class LaunchMonitorDialog(QDialog):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._timer.stop()
+        self._elapsed_timer.stop()
         if self._thread and self._thread.isRunning():
             self._thread.quit()
             self._thread.wait(1000)

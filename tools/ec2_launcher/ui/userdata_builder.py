@@ -11,12 +11,17 @@ run_instances (one replacement per instance).
 Two-phase approach
 ------------------
 Phase 1 (first boot via UserData):
+  - Sets timezone via tzutil.
+  - Configures DNS servers via Set-DnsClientServerAddress (if provided).
   - Retrieves domain credentials from SSM Parameter Store (never embedded).
+  - Runs AD pre-check: blocks if the computer name already exists.
   - Registers a one-shot scheduled task for Phase 2.
   - Calls Add-Computer -NewName <<INSTANCE_NAME>> -OUPath ... → reboot.
+  - Tags the EC2 instance with timestamped status at each milestone.
 
 Phase 2 (next boot, SYSTEM scheduled task):
   - Sets the AD computer object Description via Set-ADComputer.
+  - Tags the instance with completion status.
   - Self-destructs (Unregister-ScheduledTask).
 
 Phase 2 script is base64-encoded inside Phase 1 to avoid all
@@ -26,24 +31,55 @@ PowerShell quoting / escaping issues.
 from __future__ import annotations
 
 import base64
+from typing import List, Optional
 
 from tools.ec2_launcher.models import WindowsDomainConfig
 
 # Marker replaced by the adapter with the concrete instance name
 INSTANCE_NAME_MARKER = "<<INSTANCE_NAME>>"
 
+# Tag key used for domain join progress visible in EC2 console and the monitor
+DOMAIN_JOIN_TAG_KEY = "DomainJoinStatus"
 
-def build_windows_userdata(cfg: WindowsDomainConfig) -> str:
-    """Return a PowerShell UserData template, or '' if domain join is disabled."""
+
+def build_windows_userdata(
+    cfg: WindowsDomainConfig,
+    timezone: str = "Pacific Standard Time",
+    dns_servers: Optional[List[str]] = None,
+) -> str:
+    """Return a PowerShell UserData template, or '' if domain join is disabled.
+
+    Parameters
+    ----------
+    cfg:         Windows domain-join configuration.
+    timezone:    Windows timezone identifier passed to tzutil (e.g. 'Pacific Standard Time').
+    dns_servers: Optional list of DNS server IPs applied via Set-DnsClientServerAddress.
+    """
     if not cfg.enabled or not cfg.domain or not cfg.ou_dn:
         return ""
 
+    dns_servers = dns_servers or []
     ssm_user = f"{cfg.ssm_path}/username"
     ssm_pass = f"{cfg.ssm_path}/password"
+    endpoint_arg = (
+        f' -EndpointUrl "https://{cfg.ssm_endpoint_override}"'
+        if cfg.ssm_endpoint_override
+        else ""
+    )
 
-    phase2 = _build_phase2(ssm_user, ssm_pass, cfg.description) if cfg.description else ""
+    phase2 = _build_phase2(ssm_user, ssm_pass, cfg.description, endpoint_arg) if cfg.description else ""
 
-    lines = _build_phase1(cfg.domain, cfg.dc_host, cfg.ou_dn, ssm_user, ssm_pass, phase2)
+    lines = _build_phase1(
+        domain=cfg.domain,
+        dc_host=cfg.dc_host,
+        ou_dn=cfg.ou_dn,
+        ssm_user=ssm_user,
+        ssm_pass=ssm_pass,
+        phase2_b64=phase2,
+        timezone=timezone,
+        dns_servers=dns_servers,
+        endpoint_arg=endpoint_arg,
+    )
     return "\n".join(lines)
 
 
@@ -51,16 +87,52 @@ def build_windows_userdata(cfg: WindowsDomainConfig) -> str:
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _build_phase2(ssm_user: str, ssm_pass: str, description: str) -> str:
+def _tag_line(value_template: str) -> str:
+    """Return a PowerShell block that tags the instance with a timestamped status.
+
+    Uses IMDSv2 to obtain the instance ID and region from within the instance.
+    If tagging fails it logs and continues — never fatal.
+    """
+    safe_value = _escape_ps_dq(value_template)
+    return (
+        f'    _Set-InstanceTag "{DOMAIN_JOIN_TAG_KEY}" "$(Get-Date -Format \'HH:mm:ss\') \u2014 {safe_value}"'
+    )
+
+
+def _build_tag_helper() -> List[str]:
+    """Return the _Set-InstanceTag helper function definition lines."""
+    return [
+        "function _Set-InstanceTag {",
+        "    param([string]$Key, [string]$Value)",
+        "    try {",
+        "        $token  = (Invoke-WebRequest -UseBasicParsing -Method PUT \\",
+        '                     -Uri "http://169.254.169.254/latest/api/token" \\',
+        '                     -Headers @{"X-aws-ec2-metadata-token-ttl-seconds"="60"}).Content',
+        '        $iid    = (Invoke-WebRequest -UseBasicParsing -Uri "http://169.254.169.254/latest/meta-data/instance-id" \\',
+        '                     -Headers @{"X-aws-ec2-metadata-token"=$token}).Content',
+        '        $region = (Invoke-WebRequest -UseBasicParsing -Uri "http://169.254.169.254/latest/meta-data/placement/region" \\',
+        '                     -Headers @{"X-aws-ec2-metadata-token"=$token}).Content',
+        "        New-EC2Tag -Region $region -Resource $iid -Tag @{Key=$Key; Value=$Value} -ErrorAction Stop",
+        "    } catch {",
+        '        Write-Log "  [TAG WARN] Could not set tag \'$Key\': $_"',
+        "    }",
+        "}",
+        "",
+    ]
+
+
+def _build_phase2(ssm_user: str, ssm_pass: str, description: str, endpoint_arg: str) -> str:
     """Base64-encode the Phase 2 script so it embeds safely in Phase 1."""
     safe_desc = _escape_ps_dq(description)
+    tag_done  = f'_Set-InstanceTag "{DOMAIN_JOIN_TAG_KEY}" "$(Get-Date -Format \'HH:mm:ss\') \u2014 Complete"'
     script_lines = [
         "Import-Module ActiveDirectory -ErrorAction SilentlyContinue",
-        f'$u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true).Value',
-        f'$p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true).Value `',
+        f'$u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true{endpoint_arg}).Value',
+        f'$p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true{endpoint_arg}).Value `',
         "      | ConvertTo-SecureString -AsPlainText -Force",
         "$c = New-Object System.Management.Automation.PSCredential($u, $p)",
         f'Set-ADComputer -Identity $env:COMPUTERNAME -Description "{safe_desc}" -Credential $c',
+        f'{tag_done}',
         'Unregister-ScheduledTask -TaskName "LauncherPhase2" -Confirm:$false',
     ]
     raw = "\n".join(script_lines).encode("utf-8")
@@ -74,31 +146,70 @@ def _build_phase1(
     ssm_user: str,
     ssm_pass: str,
     phase2_b64: str,
+    timezone: str,
+    dns_servers: List[str],
+    endpoint_arg: str,
 ) -> list:
     """Return Phase 1 script lines (list avoids f-string brace conflicts with PS)."""
     safe_dc = _escape_ps_dq(dc_host)
+    log_path = r"C:\tmp\EC2_creation\ec2.log"
+
     lines = [
         "<powershell>",
         "$ErrorActionPreference = 'Stop'",
         "",
+        "# Ensure log directory exists",
+        r"New-Item -ItemType Directory -Force -Path 'C:\tmp\EC2_creation' | Out-Null",
+        "",
         "function Write-Log {",
         "    param([string]$Msg)",
         "    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
-        '    "$ts  $Msg" | Out-File -Append "C:\\Windows\\Temp\\launcher-setup.log"',
+        f'    "$ts  $Msg" | Out-File -Append "{log_path}"',
         "    Write-Host $Msg",
         "}",
         "",
+    ]
+
+    # Inject the EC2 tagging helper
+    lines += _build_tag_helper()
+
+    lines += [
         "try {",
-        f'    Write-Log "Phase 1 start — computer: {INSTANCE_NAME_MARKER}  domain: {domain}"',
+        f'    Write-Log "Phase 1 start \u2014 computer: {INSTANCE_NAME_MARKER}  domain: {domain}"',
+        _tag_line("Phase1: Started"),
         "",
+    ]
+
+    # Timezone
+    safe_tz = _escape_ps_dq(timezone)
+    lines += [
+        f'    Write-Log "Setting timezone to: {safe_tz}"',
+        f'    tzutil /s "{safe_tz}"',
+        _tag_line(f"Phase1: Timezone set ({safe_tz})"),
+        "",
+    ]
+
+    # DNS servers
+    if dns_servers:
+        dns_csv = ", ".join(f'"{ip}"' for ip in dns_servers)
+        lines += [
+            f'    Write-Log "Configuring DNS servers: {", ".join(dns_servers)}"',
+            f"    Set-DnsClientServerAddress -InterfaceAlias 'Ethernet*' -ServerAddresses ({dns_csv})",
+            _tag_line(f"Phase1: DNS set ({', '.join(dns_servers)})"),
+            "",
+        ]
+
+    # SSM credentials
+    lines += [
         "    # Retrieve credentials from SSM Parameter Store (never stored on disk)",
-        f'    $u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true).Value',
-        f'    $p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true).Value `',
+        f'    $u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true{endpoint_arg}).Value',
+        f'    $p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true{endpoint_arg}).Value `',
         "          | ConvertTo-SecureString -AsPlainText -Force",
         "    $cred = New-Object System.Management.Automation.PSCredential($u, $p)",
         '    Write-Log "Credentials retrieved from SSM."',
+        _tag_line("Phase1: Credentials retrieved"),
         "",
-        "    # Layer 4: AD pre-check — hard-stop if this computer name already exists.",
+        "    # Layer 4: AD pre-check \u2014 hard-stop if this computer name already exists.",
         f'    $computerName = "{INSTANCE_NAME_MARKER}"',
         "    $plainPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(",
         "        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))",
@@ -112,9 +223,11 @@ def _build_phase1(
         '        $existingDN = $existing.Properties["distinguishedname"][0]',
         '        Write-Log "LAUNCH BLOCKED: \'$computerName\' already exists in AD at: $existingDN"',
         '        Write-Log "Will not overwrite an existing computer account. Halting."',
+        _tag_line("ERROR: Computer name already exists in AD"),
         "        exit 1",
         "    }",
         '    Write-Log "AD pre-check passed: \'$computerName\' is available."',
+        _tag_line("Phase1: AD pre-check passed"),
         "",
     ]
 
@@ -131,11 +244,13 @@ def _build_phase1(
             '    Register-ScheduledTask -TaskName "LauncherPhase2" `',
             "        -Action $act -Trigger $trg -RunLevel Highest -User SYSTEM -Force",
             '    Write-Log "Phase 2 description task registered."',
+            _tag_line("Phase1: Phase2 task scheduled"),
             "",
         ]
 
     lines += [
-        "    # Rename computer + join domain — triggers automatic reboot",
+        "    # Rename computer + join domain \u2014 triggers automatic reboot",
+        _tag_line("Phase1: Joining domain\u2026"),
         "    Add-Computer `",
         f'        -DomainName "{domain}" `',
         f'        -NewName    "{INSTANCE_NAME_MARKER}" `',
@@ -143,10 +258,11 @@ def _build_phase1(
         "        -Credential $cred `",
         "        -Restart `",
         "        -Force",
-        '    Write-Log "Add-Computer issued — reboot imminent."',
+        '    Write-Log "Add-Computer issued \u2014 reboot imminent."',
         "}",
         "catch {",
         '    Write-Log "ERROR in Phase 1: $_"',
+        f'    _Set-InstanceTag "{DOMAIN_JOIN_TAG_KEY}" "$(Get-Date -Format \'HH:mm:ss\') \u2014 ERROR: $($_.ToString().Substring(0, [Math]::Min(100,$_.ToString().Length)))"',
         "    # Instance stays up so the error log can be reviewed via SSM Session Manager",
         "}",
         "</powershell>",

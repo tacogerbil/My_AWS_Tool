@@ -11,8 +11,8 @@ import random
 import string
 from typing import Dict, List, Optional
 
-from core.models import Ami, Instance, KeyPair, SecurityGroup, Subnet, Tag, Vpc
-from core.ports import CloudProviderPort
+from core.models import Ami, Instance, InstanceTypeInfo, KeyPair, SecurityGroup, Subnet, Tag, Vpc
+from core.ports import CloudProviderPort, VmImportPort
 
 
 def _rand_id() -> str:
@@ -57,24 +57,27 @@ class MockAdapter(CloudProviderPort):
     # CloudProviderPort implementation
     # ------------------------------------------------------------------
 
-    def get_import_orchestrator(self):  # type: ignore[override]
-        return None
+    def get_import_orchestrator(self) -> VmImportPort:  # type: ignore[override]
+        return None  # type: ignore[return-value]  # No imports in mock mode
 
-    def get_instance_type_info(self, instance_type: str) -> dict:
-        mock_data = {
-            "t2.micro":  {"vCPU": 1, "MemoryMiB": 1024},
-            "t3.micro":  {"vCPU": 2, "MemoryMiB": 1024},
-            "t3.medium": {"vCPU": 2, "MemoryMiB": 4096},
-            "m5.large":  {"vCPU": 2, "MemoryMiB": 8192},
-            "c5.large":  {"vCPU": 2, "MemoryMiB": 4096},
+    def get_instance_type_info(self, instance_type: str) -> InstanceTypeInfo:
+        """Return mock hardware metadata for well-known instance types."""
+        mock_data: Dict[str, Dict] = {
+            "t2.micro":  {"vcpu": 1, "memory_mib": 1024},
+            "t3.micro":  {"vcpu": 2, "memory_mib": 1024},
+            "t3.medium": {"vcpu": 2, "memory_mib": 4096},
+            "m5.large":  {"vcpu": 2, "memory_mib": 8192},
+            "c5.large":  {"vcpu": 2, "memory_mib": 4096},
         }
-        data = mock_data.get(instance_type, {"vCPU": 0, "MemoryMiB": 0})
-        vcpu, mem = data["vCPU"], data["MemoryMiB"]
-        return {
-            "vCPU": vcpu,
-            "MemoryMiB": mem,
-            "Label": f"{instance_type} ({vcpu} vCPU, {mem / 1024:.1f} GiB)",
-        }
+        data   = mock_data.get(instance_type, {"vcpu": 0, "memory_mib": 0})
+        vcpu   = data["vcpu"]
+        mem    = data["memory_mib"]
+        return InstanceTypeInfo(
+            instance_type=instance_type,
+            vcpu=vcpu,
+            memory_mib=mem,
+            label=f"{instance_type} ({vcpu} vCPU, {mem / 1024:.1f} GiB)",
+        )
 
     def list_vpcs(self, region: str) -> List[Vpc]:
         return self.vpcs
@@ -94,12 +97,12 @@ class MockAdapter(CloudProviderPort):
         region: str,
         instance_ids: Optional[List[str]] = None,
         tag_filters: Optional[List[Dict]] = None,
+        states: Optional[List[str]] = None,
     ) -> List[Instance]:
         """Return instances, advancing mock states on each poll.
 
-        State machine per instance:
-            poll 0  → pending
-            poll 1+ → running
+        Applies the ``states`` filter when provided, matching the real adapter's
+        behaviour so callers see consistent results against both adapters.
         """
         pool = self.instances
         if instance_ids:
@@ -108,11 +111,14 @@ class MockAdapter(CloudProviderPort):
         for inst in pool:
             count = self._poll_count.get(inst.instance_id, 0)
             if count == 0 and inst.state == "pending":
-                pass  # still pending first poll
+                pass  # still pending on first poll
             elif inst.state == "pending":
                 inst.state = "running"
                 inst.private_ip = "10.0.1." + str(random.randint(10, 200))
             self._poll_count[inst.instance_id] = count + 1
+
+        if states:
+            pool = [i for i in pool if i.state in states]
 
         return pool
 

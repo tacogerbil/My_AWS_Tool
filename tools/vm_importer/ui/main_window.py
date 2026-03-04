@@ -380,7 +380,7 @@ class LandingWindow(QMainWindow):
              return "<i>None selected</i>"
              
         data = self.service.get_instance_type_info(inst_type)
-        details = data.get('Label', 'Loading...') if data else "Unknown"
+        details = data.label if data else "Unknown"
         return f"<b>{inst_type}</b><br>{details}"
 
     def browse_file(self):

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from core.models import Vpc, Subnet, Instance
+from core.models import InstanceTypeInfo, Subnet, Vpc, Instance
 from core.ports import CloudProviderPort
 
 class ResourceService:
@@ -29,8 +29,8 @@ class ResourceService:
     def list_available_regions(self) -> List[str]:
         return self.adapter.get_available_regions()
         
-    def get_instance_type_info(self, instance_type: str) -> dict:
-        """Returns metadata (vCPU, Mem) for an instance type."""
+    def get_instance_type_info(self, instance_type: str) -> InstanceTypeInfo:
+        """Returns structured hardware metadata for an instance type."""
         return self.adapter.get_instance_type_info(instance_type)
 
     def list_buckets(self) -> List[str]:

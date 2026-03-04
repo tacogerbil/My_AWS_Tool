@@ -104,22 +104,38 @@ class WindowsSetupSection(QWidget):
         domain  = self._domain.text().strip()
         item    = self._ou_tree.currentItem()
         ou_dn   = item.data(0, Qt.UserRole) if item else None
-        
+
         if not domain or not ou_dn:
             return None
         iam_profile_text = self._iam_profile.currentText().strip()
-        
+
         return WindowsDomainConfig(
-            enabled     = True,
-            domain      = domain,
-            dc_host     = self._dc_host.text().strip(),
-            username    = self._username.text().strip(),
-            password    = self._password.text(),
-            ssm_path    = self._ssm_path.text().strip() or "/domain/join",
-            ou_dn       = ou_dn,
-            description = self._description.text().strip(),
-            iam_profile = iam_profile_text if iam_profile_text else None,
+            enabled                = True,
+            domain                 = domain,
+            dc_host                = self._dc_host.text().strip(),
+            username               = self._username.text().strip(),
+            password               = self._password.text(),
+            ssm_path               = self._ssm_path.text().strip() or "/domain/join",
+            ou_dn                  = ou_dn,
+            description            = self._description.text().strip(),
+            iam_profile            = iam_profile_text if iam_profile_text else None,
+            ssm_endpoint_override  = self.get_ssm_endpoint_override(),
         )
+
+    def get_dns_servers(self) -> List[str]:
+        """Return list of DNS server IPs from the comma-separated field.
+
+        Empty strings and whitespace-only tokens are silently dropped.
+        """
+        raw = self._dns_servers.text().strip()
+        if not raw:
+            return []
+        return [ip.strip() for ip in raw.split(",") if ip.strip()]
+
+    def get_ssm_endpoint_override(self) -> Optional[str]:
+        """Return the SSM endpoint IP override, or None if the field is blank."""
+        val = self._ssm_endpoint_override.text().strip()
+        return val if val else None
 
     def populate_profiles(self, profiles: List[str]) -> None:
         """Populate the permission profile dropdown from the account's existing profiles."""
@@ -163,6 +179,25 @@ class WindowsSetupSection(QWidget):
             "Encrypted at rest by KMS.  Access controlled by IAM."
         )
 
+        self._dns_servers = QLineEdit(get_pref("win_dns", ""))
+        self._dns_servers.setPlaceholderText("10.0.0.2, 10.0.0.3  (comma-separated, blank = DHCP default)")
+        self._dns_servers.setToolTip(
+            "DNS server IPs applied via Set-DnsClientServerAddress at first boot.\n"
+            "Applied before domain join. Leave blank to keep DHCP-assigned DNS.\n"
+            "Example: 10.0.0.2, 10.0.0.3"
+        )
+        self._dns_servers.textChanged.connect(lambda t: set_pref("win_dns", t))
+
+        self._ssm_endpoint_override = QLineEdit(get_pref("win_ssm_ip", ""))
+        self._ssm_endpoint_override.setPlaceholderText("18.246.120.242  (blank = let AWS resolve via DNS)")
+        self._ssm_endpoint_override.setToolTip(
+            "Pin SSM traffic to a specific IP instead of using DNS resolution.\n"
+            "Useful when AWS routes SSM to an unreachable VPC endpoint IP.\n"
+            "Fill in the IP that successfully passes Test-NetConnection on port 443.\n"
+            "Leave blank for normal DNS-based routing."
+        )
+        self._ssm_endpoint_override.textChanged.connect(lambda t: set_pref("win_ssm_ip", t))
+
         self._domain.textChanged.connect(lambda t: set_pref("win_domain", t))
         self._dc_host.textChanged.connect(lambda t: set_pref("win_dchost", t))
         self._username.textChanged.connect(lambda t: set_pref("win_user", t))
@@ -174,6 +209,8 @@ class WindowsSetupSection(QWidget):
             ("Username:", self._username),
             ("Password:", self._password),
             ("SSM Path:", self._ssm_path),
+            ("DNS Servers:", self._dns_servers),
+            ("SSM Endpoint IP:", self._ssm_endpoint_override),
         ]:
             form.addRow(label, widget)
 

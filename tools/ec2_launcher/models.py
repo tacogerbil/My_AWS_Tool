@@ -75,6 +75,7 @@ class WindowsDomainConfig:
     ou_dn: str = ""           # Full DN of target OU/Container
     description: str = ""     # AD computer object description (post-join)
     iam_profile: Optional[str] = None     # IAM instance profile name or ARN for SSM access
+    ssm_endpoint_override: Optional[str] = None  # Pin SSM traffic to a specific IP (bypass DNS)
 
 
 @dataclass
@@ -101,6 +102,13 @@ class LaunchConfig:
     # Windows domain join — UserData template uses <<INSTANCE_NAME>> marker
     user_data_template: Optional[str] = None
     iam_instance_profile: Optional[str] = None
+    # Network / security options — all default to the safest/most secure value
+    associate_public_ip: bool = False          # Never assign a public IP by default
+    imdsv2_required: bool = True              # Enforce IMDSv2 (HttpTokens=required)
+    enable_termination_protection: bool = True # Prevent accidental termination
+    # OS configuration applied via UserData at first boot
+    timezone: str = "Pacific Standard Time"   # Windows timezone ID (tzutil)
+    dns_servers: List[str] = field(default_factory=list)  # Override DHCP DNS servers
 
 
 @dataclass

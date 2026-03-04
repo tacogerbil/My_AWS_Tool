@@ -1,9 +1,12 @@
 import boto3
 import logging
-from typing import List, Optional, Dict
+from typing import Any, Dict, List, Optional
 from botocore.exceptions import ClientError, BotoCoreError
-from core.models import Vpc, Subnet, SecurityGroup, InboundRule, Instance, Tag, Ami, KeyPair
-from core.ports import CloudProviderPort
+from core.models import (
+    Ami, CreatedKeyPair, InstanceTypeInfo,
+    InboundRule, Instance, KeyPair, SecurityGroup, Subnet, Tag, Vpc,
+)
+from core.ports import CloudProviderPort, VmImportPort
 
 # MCCC: Explicit Logging Configuration
 logger = logging.getLogger(__name__)
@@ -56,35 +59,43 @@ def _parse_inbound_rules(permissions: List[Dict]) -> List[InboundRule]:
 
 class AwsAdapter(CloudProviderPort):
     """
-    AWS Implementation of CloudProviderPort using Boto3.
+    AWS implementation of CloudProviderPort, backed by boto3.
+
+    All AWS I/O is isolated here; no boto3 types cross the adapter boundary.
+    Region switching is handled by _ec2_for(region) which caches clients
+    per-region — no shared mutable state, safe across threads.
     """
 
-    def __init__(self, profile_name: Optional[str] = None, region: Optional[str] = None):
-        self.session = boto3.Session(profile_name=profile_name, region_name=region)
-        self.ec2 = self.session.client("ec2")
-        self.sts = self.session.client("sts")
+    def __init__(self, profile_name: Optional[str] = None, region: Optional[str] = None) -> None:
+        self._session = boto3.Session(profile_name=profile_name, region_name=region)
+        self._sts = self._session.client("sts")
+        # Per-region EC2 client cache — populated lazily by _ec2_for(region).
+        # Using a dict avoids the shared-state mutation that the old self.ec2 pattern caused.
+        self._ec2_cache: Dict[str, Any] = {}
+
+    def _ec2_for(self, region: str) -> Any:
+        """Return a cached EC2 client for *region*, creating one on first use.
+
+        This is the single place EC2 clients are created.  All read/write methods
+        call this instead of mutating a shared self.ec2 attribute, making the
+        adapter safe to call from multiple threads without data races.
+        """
+        if region not in self._ec2_cache:
+            self._ec2_cache[region] = self._session.client("ec2", region_name=region)
+        return self._ec2_cache[region]
 
     def _get_tags(self, resource_dict: dict) -> List[Tag]:
-        """Helper to extract tags from boto3 response."""
+        """Extract Tag list from a boto3 response dict."""
         return [Tag(key=t["Key"], value=t["Value"]) for t in resource_dict.get("Tags", [])]
 
     def _get_name_from_tags(self, tags: List[Tag]) -> Optional[str]:
-        """Helper to find Name tag."""
-        for tag in tags:
-            if tag.key == "Name":
-                return tag.value
-        return None
+        """Return the value of the 'Name' tag, or None."""
+        return next((t.value for t in tags if t.key == "Name"), None)
 
     def list_vpcs(self, region: str) -> List[Vpc]:
         try:
-            # Note: client is created in __init__ with session region, 
-            # if dynamic region switching is needed, we should recreate client or pass region to calls if supported.
-            # Simplified: Assuming session region matches request or re-init client.
-            # Ideally, we might want a factory or property for the client if regions change frequently.
-            if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
-
-            response = self.ec2.describe_vpcs()
+            ec2 = self._ec2_for(region)
+            response = ec2.describe_vpcs()
             vpcs = []
             for item in response.get("Vpcs", []):
                 tags = self._get_tags(item)
@@ -98,19 +109,16 @@ class AwsAdapter(CloudProviderPort):
                 ))
             return vpcs
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error listing VPCs: {e}")
+            logger.error("Error listing VPCs: %s", e)
             return []
 
     def list_subnets(self, region: str, vpc_id: Optional[str] = None) -> List[Subnet]:
         try:
-            if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
+            ec2 = self._ec2_for(region)
+            filters = ([{"Name": "vpc-id", "Values": [vpc_id]}] if vpc_id else [])
 
-            filters = []
-            if vpc_id:
-                filters.append({"Name": "vpc-id", "Values": [vpc_id]})
-
-            response = self.ec2.describe_subnets(Filters=filters) if filters else self.ec2.describe_subnets()
+            kwargs = {"Filters": filters} if filters else {}
+            response = ec2.describe_subnets(**kwargs)
             subnets = []
             for item in response.get("Subnets", []):
                 tags = self._get_tags(item)
@@ -126,19 +134,15 @@ class AwsAdapter(CloudProviderPort):
                 ))
             return subnets
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error listing Subnets: {e}")
+            logger.error("Error listing Subnets: %s", e)
             return []
 
     def list_security_groups(self, region: str, vpc_id: Optional[str] = None) -> List[SecurityGroup]:
         try:
-            if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
-
-            filters = []
-            if vpc_id:
-                filters.append({"Name": "vpc-id", "Values": [vpc_id]})
-            
-            response = self.ec2.describe_security_groups(Filters=filters) if filters else self.ec2.describe_security_groups()
+            ec2 = self._ec2_for(region)
+            filters = ([{"Name": "vpc-id", "Values": [vpc_id]}] if vpc_id else [])
+            kwargs = {"Filters": filters} if filters else {}
+            response = ec2.describe_security_groups(**kwargs)
             sgs = []
             for item in response.get("SecurityGroups", []):
                 tags = self._get_tags(item)
@@ -152,7 +156,7 @@ class AwsAdapter(CloudProviderPort):
                 ))
             return sgs
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error listing Security Groups: {e}")
+            logger.error("Error listing Security Groups: %s", e)
             return []
 
     def create_security_group(
@@ -163,14 +167,13 @@ class AwsAdapter(CloudProviderPort):
         vpc_id: str,
         rules: List[InboundRule],
     ) -> SecurityGroup:
-        if region != self.session.region_name:
-            self.ec2 = self.session.client("ec2", region_name=region)
+        ec2 = self._ec2_for(region)
         try:
-            sg_id = self.ec2.create_security_group(
+            sg_id = ec2.create_security_group(
                 GroupName=name, Description=description, VpcId=vpc_id
             )["GroupId"]
             if rules:
-                self.ec2.authorize_security_group_ingress(
+                ec2.authorize_security_group_ingress(
                     GroupId=sg_id,
                     IpPermissions=_rules_to_permissions(rules),
                 )
@@ -182,27 +185,33 @@ class AwsAdapter(CloudProviderPort):
             logger.error("Failed to create security group '%s': %s", name, exc)
             raise
 
-    def describe_instances(self, region: str, instance_ids: Optional[List[str]] = None, tag_filters: Optional[List[Dict[str, str]]] = None) -> List[Instance]:
-        try:
-            if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
+    def describe_instances(
+        self,
+        region: str,
+        instance_ids: Optional[List[str]] = None,
+        tag_filters: Optional[List[Dict[str, str]]] = None,
+        states: Optional[List[str]] = None,
+    ) -> List[Instance]:
+        """Describe EC2 instances, filtered by IDs, tags, and/or state.
 
-            kwargs = {}
+        The ``states`` parameter is explicit — callers decide which states
+        they care about rather than this adapter imposing hidden assumptions.
+        """
+        try:
+            ec2 = self._ec2_for(region)
+
+            kwargs: Dict = {}
             if instance_ids:
                 kwargs["InstanceIds"] = instance_ids
-            
-            filters = []
-            # We add a default filter to only fetch running or stopped instances (ignore terminated/pending for generic views)
-            # This follows the original clone logic which asked for running | stopped.
-            filters.append({'Name': 'instance-state-name', 'Values': ['running', 'stopped']})
+            filters: List[Dict] = []
+            if states:
+                filters.append({"Name": "instance-state-name", "Values": states})
             if tag_filters:
                 for tag in tag_filters:
-                    filters.append({'Name': f"tag:{tag['Key']}", 'Values': [tag['Value']]})
-            
+                    filters.append({"Name": f"tag:{tag['Key']}", "Values": [tag["Value"]]})
             if filters:
                 kwargs["Filters"] = filters
-            
-            response = self.ec2.describe_instances(**kwargs)
+            response = ec2.describe_instances(**kwargs)
             instances = []
             for reservation in response.get("Reservations", []):
                 for item in reservation.get("Instances", []):
@@ -224,9 +233,9 @@ class AwsAdapter(CloudProviderPort):
                     instances.append(Instance(
                         instance_id=item["InstanceId"],
                         instance_type=item["InstanceType"],
-                        state=state,
-                        public_ip=public_ip,
-                        private_ip=private_ip,
+                        state=item["State"]["Name"],
+                        public_ip=item.get("PublicIpAddress"),
+                        private_ip=item.get("PrivateIpAddress"),
                         vpc_id=item.get("VpcId", ""),
                         subnet_id=item.get("SubnetId", ""),
                         security_groups=sgs,
@@ -237,7 +246,7 @@ class AwsAdapter(CloudProviderPort):
                     ))
             return instances
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error describing instances: {e}")
+            logger.error("Error describing instances: %s", e)
             return []
 
     def list_amis(
@@ -247,17 +256,11 @@ class AwsAdapter(CloudProviderPort):
         filters: Optional[List[Dict]] = None,
     ) -> List[Ami]:
         try:
-            if region != self.session.region_name:
-                self.ec2 = self.session.client("ec2", region_name=region)
-
+            ec2 = self._ec2_for(region)
             effective_filters = [{"Name": "state", "Values": ["available"]}]
             if filters:
                 effective_filters.extend(filters)
-
-            response = self.ec2.describe_images(
-                Owners=owners,
-                Filters=effective_filters,
-            )
+            response = ec2.describe_images(Owners=owners, Filters=effective_filters)
             amis = []
             for item in response.get("Images", []):
                 tags = self._get_tags(item)
@@ -275,22 +278,23 @@ class AwsAdapter(CloudProviderPort):
                 ))
             return amis
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error listing AMIs: {e}")
+            logger.error("Error listing AMIs: %s", e)
             return []
 
     def list_instance_profiles(self) -> List[str]:
-        """Return sorted list of IAM instance profile names for the account.
+        """Return sorted list of IAM instance profile names.
 
-        Uses a paginator so accounts with many profiles are handled correctly.
         IAM is a global service — no region parameter needed.
+        Uses pagination so accounts with many profiles are handled correctly.
         """
         try:
-            iam = self.session.client("iam")
+            iam = self._session.client("iam")
             paginator = iam.get_paginator("list_instance_profiles")
-            names: List[str] = []
-            for page in paginator.paginate():
-                for profile in page.get("InstanceProfiles", []):
-                    names.append(profile["InstanceProfileName"])
+            names: List[str] = [
+                profile["InstanceProfileName"]
+                for page in paginator.paginate()
+                for profile in page.get("InstanceProfiles", [])
+            ]
             return sorted(names)
         except (ClientError, BotoCoreError) as exc:
             logger.error("Error listing instance profiles: %s", exc)
@@ -298,16 +302,11 @@ class AwsAdapter(CloudProviderPort):
 
     def list_key_pairs(self, region: str) -> List[KeyPair]:
         try:
-            if region != self.session.region_name:
-                 self.ec2 = self.session.client("ec2", region_name=region)
-                 
-            response = self.ec2.describe_key_pairs()
-            keys = []
-            for item in response.get("KeyPairs", []):
-                keys.append(KeyPair(key_name=item["KeyName"]))
-            return keys
+            ec2 = self._ec2_for(region)
+            response = ec2.describe_key_pairs()
+            return [KeyPair(key_name=item["KeyName"]) for item in response.get("KeyPairs", [])]
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Error listing Key Pairs: {e}")
+            logger.error("Error listing Key Pairs: %s", e)
             return []
 
     def create_key_pair(
@@ -316,20 +315,10 @@ class AwsAdapter(CloudProviderPort):
         name: str,
         key_type: str = "rsa",
         key_format: str = "pem",
-    ) -> "CreatedKeyPair":
-        """Create a new EC2 key pair and return the private key material.
-
-        The private key is returned exactly once by AWS and is not stored
-        anywhere in this adapter.  Callers must write it to disk immediately.
-        """
-        from core.models import CreatedKeyPair
-        if region != self.session.region_name:
-            self.ec2 = self.session.client("ec2", region_name=region)
-        response = self.ec2.create_key_pair(
-            KeyName=name,
-            KeyType=key_type,
-            KeyFormat=key_format,
-        )
+    ) -> CreatedKeyPair:
+        """Create a new EC2 key pair and return the private key material (available once only)."""
+        ec2 = self._ec2_for(region)
+        response = ec2.create_key_pair(KeyName=name, KeyType=key_type, KeyFormat=key_format)
         return CreatedKeyPair(
             key_name=response["KeyName"],
             key_material=response["KeyMaterial"],
@@ -339,205 +328,214 @@ class AwsAdapter(CloudProviderPort):
 
     def validate_connection(self) -> bool:
         try:
-            self.sts.get_caller_identity()
+            self._sts.get_caller_identity()
             return True
         except (ClientError, BotoCoreError):
             return False
 
     def get_available_regions(self) -> List[str]:
         try:
-            response = self.ec2.describe_regions()
+            ec2 = self._ec2_for(self._session.region_name or "us-east-1")
+            response = ec2.describe_regions()
             return [r["RegionName"] for r in response.get("Regions", [])]
         except (ClientError, BotoCoreError):
             return []
 
-    def get_import_orchestrator(self):
-        """
-        Creates and returns a VmImportOrchestrator configured with this adapter's session.
-        """
+    def get_import_orchestrator(self) -> VmImportPort:
+        """Return a VmImportOrchestrator configured with this adapter's boto3 session."""
         try:
             from tools.vm_importer.services import VmImportOrchestrator
-            # We explicitly create the s3 client here, keeping the session private to the adapter.
-            s3_client = self.session.client("s3")
-            return VmImportOrchestrator(self.ec2, s3_client)
-        except Exception as e:
-            logger.error(f"Failed to create orchestrator: {e}")
-            return None
+            s3_client = self._session.client("s3")
+            ec2_client = self._ec2_for(self._session.region_name or "us-east-1")
+            return VmImportOrchestrator(ec2_client, s3_client)  # type: ignore[return-value]
+        except Exception as exc:
+            logger.error("Failed to create import orchestrator: %s", exc)
+            raise
 
-    def get_instance_type_info(self, instance_type: str) -> dict:
-        """
-        Fetches vCPU and Memory info for the given instance type.
-        """
+    def get_instance_type_info(self, instance_type: str) -> InstanceTypeInfo:
+        """Fetch and return structured metadata for an EC2 instance type."""
         try:
-            resp = self.ec2.describe_instance_types(InstanceTypes=[instance_type])
+            ec2 = self._ec2_for(self._session.region_name or "us-east-1")
+            resp = ec2.describe_instance_types(InstanceTypes=[instance_type])
             types = resp.get("InstanceTypes", [])
             if not types:
-                return {}
-            
-            info = types[0]
-            vcpu = info.get("VCpuInfo", {}).get("DefaultVCpus", 0)
-            mem = info.get("MemoryInfo", {}).get("SizeInMiB", 0)
-            
-            # Expanded Metadata
-            proc_info = info.get("ProcessorInfo", {})
-            clock_speed = proc_info.get("SustainedClockSpeedInGhz", 0.0)
-            archs = info.get("ProcessorInfo", {}).get("SupportedArchitectures", [])
-            arch_str = ",".join(archs) if archs else "unknown"
-            
-            # Format Label
-            # e.g., "t3.medium (2 vCPU @ 2.5GHz, 4.0 GiB, x86_64)"
+                return InstanceTypeInfo(instance_type=instance_type, vcpu=0, memory_mib=0)
+
+            info         = types[0]
+            vcpu         = info.get("VCpuInfo", {}).get("DefaultVCpus", 0)
+            memory_mib   = info.get("MemoryInfo", {}).get("SizeInMiB", 0)
+            clock_speed  = info.get("ProcessorInfo", {}).get("SustainedClockSpeedInGhz", 0.0)
+            archs        = info.get("ProcessorInfo", {}).get("SupportedArchitectures", [])
+            architecture = ",".join(archs) if archs else "unknown"
+
             label = f"{instance_type} ({vcpu} vCPU"
             if clock_speed > 0:
                 label += f" @ {clock_speed} GHz"
-            label += f", {mem/1024:.1f} GiB, {arch_str})"
-            
-            return {
-                "vCPU": vcpu,
-                "MemoryMiB": mem,
-                "ClockSpeedGhz": clock_speed,
-                "Architecture": arch_str,
-                "Label": label
-            }
-        except (ClientError, BotoCoreError) as e:
-            logger.error(f"Failed to describe instance type {instance_type}: {e}")
-            return {}
+            label += f", {memory_mib / 1024:.1f} GiB, {architecture})"
+
+            return InstanceTypeInfo(
+                instance_type=instance_type,
+                vcpu=vcpu,
+                memory_mib=memory_mib,
+                clock_speed_ghz=clock_speed,
+                architecture=architecture,
+                label=label,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Failed to describe instance type %s: %s", instance_type, exc)
+            return InstanceTypeInfo(instance_type=instance_type, vcpu=0, memory_mib=0)
 
     def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
         """Write credentials to SSM Parameter Store as KMS-encrypted SecureStrings."""
         from botocore.config import Config
         boto_config = Config(connect_timeout=5, read_timeout=5)
-        ssm = self.session.client("ssm", region_name=region, config=boto_config)
+        ssm = self._session.client("ssm", region_name=region, config=boto_config)
         for name, value in params.items():
-            ssm.put_parameter(
-                Name=name,
-                Value=value,
-                Type="SecureString",
-                Overwrite=True,
-            )
+            ssm.put_parameter(Name=name, Value=value, Type="SecureString", Overwrite=True)
             logger.info("SSM parameter stored: %s", name)
 
     def list_buckets(self) -> List[str]:
-        """Lists all S3 buckets."""
+        """List all S3 buckets (global service)."""
         try:
-            # S3 is global, but we use the adapter's session
-            s3 = self.session.client("s3")
+            s3 = self._session.client("s3")
             response = s3.list_buckets()
             return [b["Name"] for b in response.get("Buckets", [])]
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Failed to list buckets: {e}")
+            logger.error("Failed to list buckets: %s", e)
             return []
 
+    # ------------------------------------------------------------------
+    # run_instances — split into focused private helpers (SRP)
+    # ------------------------------------------------------------------
+
     def run_instances(self, region: str, config: "LaunchConfig") -> "LaunchResult":
-        """Launch EC2 instances per LaunchConfig; returns LaunchResult with IDs.
+        """Launch EC2 instances per LaunchConfig; returns LaunchResult with IDs."""
+        from tools.ec2_launcher.models import LaunchConfig, LaunchResult
 
-        Translates our clean LaunchConfig into the full boto3 run_instances
-        payload — block device mappings, tag specifications, network interface.
-        Each instance gets its own Name tag so they appear individually named
-        in the AWS console.
-        """
-        from tools.ec2_launcher.models import LaunchConfig, LaunchResult  # local to avoid circular
-
-        if region != self.session.region_name:
-            self.ec2 = self.session.client("ec2", region_name=region)
-
-        launched_ids: List[str] = []
-        errors: List[tuple] = []
-
-        # Build common block device mapping (root volume + any extras)
-        bdm = [
-            {
-                "DeviceName": v.device_name,
-                "Ebs": {
-                    "VolumeSize": v.size_gb,
-                    "VolumeType": v.volume_type,
-                    "DeleteOnTermination": v.delete_on_termination,
-                    "Encrypted": v.encrypted,
-                    **({"Iops": v.iops} if v.iops else {}),
-                    **({"Throughput": v.throughput_mbps} if v.throughput_mbps else {}),
-                },
-            }
-            for v in (config.volumes or [])
-        ]
-        if not bdm:
-            # Fallback: at minimum set root volume size from volume_gb
-            bdm = [
-                {
-                    "DeviceName": "/dev/sda1",
-                    "Ebs": {
-                        "VolumeSize": config.volume_gb,
-                        "VolumeType": config.volume_type,
-                        "DeleteOnTermination": True,
-                    },
-                }
-            ]
-
-        # Layer 3 — domain join requires explicit instance names; no auto-fallback.
+        ec2 = self._ec2_for(region)
+        # Domain join requires explicit instance names — no silent fallback.
         if config.user_data_template and not config.instance_names:
             raise ValueError(
                 "Domain join requires explicit instance names. "
                 "Auto-generated fallback names are forbidden when domain join is active."
             )
-        # Launch one instance per name so each gets its own tagged Name
+        bdm   = self._build_bdm(config)
         names = config.instance_names or [f"Instance-{i+1}" for i in range(config.instance_count)]
+        launched_ids: List[str] = []
+        errors: List[tuple]     = []
+
         for name in names:
-            tags = {**config.tags, "Name": name}
-            tag_spec = [
-                {
-                    "ResourceType": "instance",
-                    "Tags": [{"Key": k, "Value": v} for k, v in tags.items()],
-                }
-            ]
-            try:
-                # Substitute the instance-specific computer name into UserData
-                userdata = (
-                    config.user_data_template.replace("<<INSTANCE_NAME>>", name)
-                    if config.user_data_template else None
-                )
-                kwargs: Dict = dict(
-                    ImageId=config.image_id,
-                    InstanceType=config.instance_type,
-                    MinCount=1,
-                    MaxCount=1,
-                    KeyName=config.key_name,
-                    NetworkInterfaces=[
-                        {
-                            "DeviceIndex": 0,
-                            "SubnetId": config.subnet_id,
-                            "Groups": config.sg_ids,
-                            "AssociatePublicIpAddress": True,
-                        }
-                    ],
-                    BlockDeviceMappings=bdm,
-                    TagSpecifications=tag_spec,
-                )
-                if userdata:
-                    kwargs["UserData"] = userdata
-                if config.iam_instance_profile:
-                    if config.iam_instance_profile.startswith("arn:aws:iam::"):
-                        kwargs["IamInstanceProfile"] = {"Arn": config.iam_instance_profile}
-                    else:
-                        kwargs["IamInstanceProfile"] = {"Name": config.iam_instance_profile}
-                resp = self.ec2.run_instances(**kwargs)
-                iid = resp["Instances"][0]["InstanceId"]
-                launched_ids.append(iid)
-                logger.info("Launched instance %s (%s)", iid, name)
-            except (ClientError, BotoCoreError) as exc:
-                logger.error("Failed to launch '%s': %s", name, exc)
-                errors.append((name, str(exc)))
+            launched, error = self._launch_one(ec2, name, config, bdm)
+            if launched:
+                launched_ids.append(launched)
+            if error:
+                errors.append((name, error))
 
         if not launched_ids and errors:
             return LaunchResult(
-                instance_ids=[],
-                instance_names=[],
-                region=region,
-                error=errors[0][1],
-                per_instance_errors=errors,
+                instance_ids=[], instance_names=[], region=region,
+                error=errors[0][1], per_instance_errors=errors,
             )
-
         return LaunchResult(
             instance_ids=launched_ids,
-            instance_names=names[: len(launched_ids)],
+            instance_names=names[:len(launched_ids)],
             region=region,
             per_instance_errors=errors,
         )
+
+    def _build_bdm(self, config: "LaunchConfig") -> List[Dict]:
+        """Build the EBS block device mapping list from LaunchConfig."""
+        if config.volumes:
+            return [
+                {
+                    "DeviceName": v.device_name,
+                    "Ebs": {
+                        "VolumeSize": v.size_gb,
+                        "VolumeType": v.volume_type,
+                        "DeleteOnTermination": v.delete_on_termination,
+                        "Encrypted": v.encrypted,
+                        **({"Iops": v.iops} if v.iops else {}),
+                        **({"Throughput": v.throughput_mbps} if v.throughput_mbps else {}),
+                    },
+                }
+                for v in config.volumes
+            ]
+        # Fallback: set root volume from volume_gb
+        return [{
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+                "VolumeSize": config.volume_gb,
+                "VolumeType": config.volume_type,
+                "DeleteOnTermination": True,
+            },
+        }]
+
+    @staticmethod
+    def _build_tag_spec(name: str, tags: Dict[str, str]) -> List[Dict]:
+        """Build a boto3 TagSpecification list for one instance."""
+        merged = {**tags, "Name": name}
+        return [{
+            "ResourceType": "instance",
+            "Tags": [{"Key": k, "Value": v} for k, v in merged.items()],
+        }]
+
+    def _launch_one(
+        self,
+        ec2: Any,
+        name: str,
+        config: "LaunchConfig",
+        bdm: List[Dict],
+    ) -> tuple:
+        """Launch a single named instance; return (instance_id | None, error | None)."""
+        userdata = (
+            config.user_data_template.replace("<<INSTANCE_NAME>>", name)
+            if config.user_data_template else None
+        )
+        kwargs: Dict = dict(
+            ImageId=config.image_id,
+            InstanceType=config.instance_type,
+            MinCount=1,
+            MaxCount=1,
+            KeyName=config.key_name,
+            NetworkInterfaces=[{
+                "DeviceIndex": 0,
+                "SubnetId": config.subnet_id,
+                "Groups": config.sg_ids,
+                "AssociatePublicIpAddress": config.associate_public_ip,
+            }],
+            BlockDeviceMappings=bdm,
+            TagSpecifications=self._build_tag_spec(name, config.tags),
+            MetadataOptions={
+                "HttpTokens":   "required" if config.imdsv2_required else "optional",
+                "HttpEndpoint": "enabled",
+            },
+        )
+        if userdata:
+            kwargs["UserData"] = userdata
+        if config.iam_instance_profile:
+            key = "Arn" if config.iam_instance_profile.startswith("arn:aws:iam::") else "Name"
+            kwargs["IamInstanceProfile"] = {key: config.iam_instance_profile}
+        try:
+            resp = ec2.run_instances(**kwargs)
+            iid  = resp["Instances"][0]["InstanceId"]
+            logger.info("Launched instance %s (%s)", iid, name)
+            if config.enable_termination_protection:
+                self._enable_termination_protection(ec2, iid)
+            return iid, None
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Failed to launch '%s': %s", name, exc)
+            return None, str(exc)
+
+    def _enable_termination_protection(self, ec2: Any, instance_id: str) -> None:
+        """Best-effort: enable termination protection; logs warning on failure."""
+        try:
+            ec2.modify_instance_attribute(
+                InstanceId=instance_id,
+                DisableApiTermination={"Value": True},
+            )
+            logger.info("Termination protection enabled for %s", instance_id)
+        except (ClientError, BotoCoreError) as exc:
+            logger.warning(
+                "Could not enable termination protection for %s: %s", instance_id, exc
+            )
 

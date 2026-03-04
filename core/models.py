@@ -105,3 +105,19 @@ class OrgUnit:
     distinguished_name: str  # Full DN: "OU=Prod,OU=Servers,DC=corp,DC=example,DC=com"
     object_class: str = "organizationalUnit"  # "organizationalUnit" | "container"
     depth: int = 0           # Nesting depth — used for display indentation
+
+
+@dataclass
+class InstanceTypeInfo:
+    """Metadata for an EC2 instance type.
+
+    Returned by CloudProviderPort.get_instance_type_info().
+    Callers use this for hardware summary display; no AWS SDK types leak out.
+    """
+
+    instance_type: str
+    vcpu: int
+    memory_mib: int
+    clock_speed_ghz: float = 0.0
+    architecture: str = "unknown"
+    label: str = ""  # Pre-formatted human-readable summary, e.g. "t3.medium (2 vCPU, 4.0 GiB)"

@@ -38,6 +38,7 @@ from core.models import Ami, KeyPair, SecurityGroup, Subnet, Vpc
 from ui.common.styles import get_checkbox_style
 from tools.ec2_launcher.models import LaunchConfig, SectionPatch
 from tools.ec2_launcher.ui.ami_section import AmiSection
+from tools.ec2_launcher.ui.advanced_section import AdvancedSection
 from tools.ec2_launcher.ui.hardware_section import HardwareSection
 from tools.ec2_launcher.ui.instance_names import InstanceNamesSection
 from tools.ec2_launcher.ui.network_section import NetworkSection
@@ -141,6 +142,7 @@ class ConfigForm(QScrollArea):
         self._storage   = StorageSection()
         self._tags      = TagsSection()
         self._windows   = WindowsSetupSection()
+        self._advanced  = AdvancedSection()
 
         self._sec_instances = self._wrap("Instances",     self._instances)
         self._sec_image     = self._wrap("Image",         self._image)
@@ -148,13 +150,14 @@ class ConfigForm(QScrollArea):
         self._sec_storage   = self._wrap("Storage",       self._storage)
         self._sec_network   = self._wrap("Network",       self._network)
         self._sec_security  = self._wrap("Security",      self._security)
+        self._sec_advanced  = self._wrap("Advanced",      self._advanced, collapsed=True)
         self._sec_tags      = self._wrap("Tags",          self._tags,    collapsed=True)
         self._sec_windows   = self._wrap("Windows Setup", self._windows, collapsed=True)
 
         for sec in (
             self._sec_instances, self._sec_image, self._sec_hardware,
             self._sec_storage, self._sec_network, self._sec_security,
-            self._sec_tags, self._sec_windows,
+            self._sec_advanced, self._sec_tags, self._sec_windows,
         ):
             layout.addWidget(sec)
 
@@ -268,6 +271,19 @@ class ConfigForm(QScrollArea):
                 self._sec_instances.expand()
                 return None
 
+        domain_cfg = self._windows.get_domain_config()
+        if domain_cfg is not None:
+            from tools.ec2_launcher.ui.userdata_builder import build_windows_userdata
+            user_data_template = build_windows_userdata(
+                cfg=domain_cfg,
+                timezone=self._advanced.get_timezone(),
+                dns_servers=self._windows.get_dns_servers(),
+            )
+            iam_profile = domain_cfg.iam_profile
+        else:
+            user_data_template = None
+            iam_profile = None
+
         return LaunchConfig(
             image_id=image_id,
             instance_type=instance_type,
@@ -281,6 +297,14 @@ class ConfigForm(QScrollArea):
             instance_count=self._instances.get_count(),
             instance_names=self._instances.get_instance_names(),
             volumes=volumes,
+            user_data_template=user_data_template,
+            iam_instance_profile=iam_profile,
+            # Advanced section fields
+            associate_public_ip=self._advanced.get_associate_public_ip(),
+            imdsv2_required=self._advanced.get_imdsv2_required(),
+            enable_termination_protection=self._advanced.get_termination_protection(),
+            timezone=self._advanced.get_timezone(),
+            dns_servers=self._windows.get_dns_servers(),
         )
 
     def get_validation_errors(self) -> List[str]:
