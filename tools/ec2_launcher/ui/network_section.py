@@ -11,13 +11,27 @@ Public API (used by ConfigForm):
     set_vpc_id(vpc_id: str)
     set_subnet_id(subnet_id: str)
     mark_error(vpc_error: bool, subnet_error: bool)
+    get_associate_public_ip() -> bool
+    get_imdsv2_required() -> bool
+    get_termination_protection() -> bool
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.models import Subnet, Vpc
 from tools.ec2_launcher.ui.vpc_badge import VpcBadge
@@ -59,6 +73,47 @@ class NetworkSection(QWidget):
         self._all_subnets: List[Subnet] = []
         self._vpc_combo.currentIndexChanged.connect(self._on_vpc_changed)
 
+        # ---------------------------------------------------------------
+        # Instance / security options that belong logically with networking
+        # ---------------------------------------------------------------
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #d5d8dc;")
+        layout.addWidget(sep)
+
+        net_form = QFormLayout()
+        net_form.setLabelAlignment(Qt.AlignRight)
+        net_form.setSpacing(8)
+
+        self._public_ip_chk = QCheckBox("Enable public IP / public DNS")
+        self._public_ip_chk.setChecked(False)
+        self._public_ip_chk.setToolTip(
+            "When unchecked the instance gets no public IPv4 address or public DNS name.\n"
+            "Leave OFF for all internal / VPN-accessible instances."
+        )
+        net_form.addRow("Public IP:", self._public_ip_chk)
+
+        self._imdsv2_combo = QComboBox()
+        self._imdsv2_combo.addItem("Required  (IMDSv2 only — recommended)", userData=True)
+        self._imdsv2_combo.addItem("Optional  (IMDSv1 + IMDSv2 allowed)", userData=False)
+        self._imdsv2_combo.setCurrentIndex(0)
+        self._imdsv2_combo.setToolTip(
+            "IMDSv2 uses session-oriented requests and is required by many security\n"
+            "baselines (CIS, AWS Foundational Security).\n"
+            "Only select 'Optional' if a specific workload requires IMDSv1."
+        )
+        net_form.addRow("Metadata (IMDSv2):", self._imdsv2_combo)
+
+        self._term_protect_chk = QCheckBox("Enable termination protection")
+        self._term_protect_chk.setChecked(True)
+        self._term_protect_chk.setToolTip(
+            "Prevents accidental termination via the console or API.\n"
+            "Highly recommended for production instances."
+        )
+        net_form.addRow("Termination:", self._term_protect_chk)
+
+        layout.addLayout(net_form)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -99,6 +154,18 @@ class NetworkSection(QWidget):
     def mark_error(self, vpc_error: bool, subnet_error: bool) -> None:
         self._vpc_combo.setStyleSheet(_ERROR_STYLE if vpc_error else _NORMAL_STYLE)
         self._subnet_combo.setStyleSheet(_ERROR_STYLE if subnet_error else _NORMAL_STYLE)
+
+    def get_associate_public_ip(self) -> bool:
+        """True if the instance should receive a public IP address."""
+        return self._public_ip_chk.isChecked()
+
+    def get_imdsv2_required(self) -> bool:
+        """True → HttpTokens=required; False → HttpTokens=optional."""
+        return bool(self._imdsv2_combo.currentData())
+
+    def get_termination_protection(self) -> bool:
+        """True if termination protection should be enabled post-launch."""
+        return self._term_protect_chk.isChecked()
 
     # ------------------------------------------------------------------
     # Private
