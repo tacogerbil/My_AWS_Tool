@@ -2,12 +2,13 @@
 test_userdata_builder.py — Unit tests for build_windows_userdata.
 
 Pure function: no AWS, no Qt, no network.  Verifies that the generated
-PowerShell script contains the correct commands for all new options:
+PowerShell script contains the correct commands for all options:
   - Timezone (tzutil)
   - DNS servers (Set-DnsClientServerAddress)
   - SSM endpoint override (-EndpointUrl)
   - EC2 tag milestones (_Set-InstanceTag calls with DomainJoinStatus key)
   - Log path (C:\\tmp\\EC2_creation\\ec2.log)
+  - Local Administrators assignment (Add-LocalGroupMember in Phase 2)
 """
 
 import pytest
@@ -208,3 +209,69 @@ def test_launch_config_defaults() -> None:
     assert cfg.enable_termination_protection is True, "Termination protection must default to True"
     assert cfg.timezone == "Pacific Standard Time",   "Timezone must default to PST"
     assert cfg.dns_servers == [],                     "DNS servers must default to empty list"
+
+
+# ---------------------------------------------------------------------------
+# admin_principals / Local Administrators tests
+# ---------------------------------------------------------------------------
+
+import base64  # noqa: E402  (standard lib; placed here to keep it near usage)
+
+
+def _decode_phase2(script: str) -> str:
+    """Extract and base64-decode the embedded Phase 2 script from *script*."""
+    import re
+    match = re.search(r'\$b64 = "([A-Za-z0-9+/=]+)"', script)
+    assert match, "Phase 2 base64 block not found in script"
+    return base64.b64decode(match.group(1)).decode("utf-8")
+
+
+def test_no_admin_block_when_principals_empty(minimal_cfg: WindowsDomainConfig) -> None:
+    """Add-LocalGroupMember must NOT appear when admin_principals is empty."""
+    minimal_cfg.admin_principals = []
+    script = build_windows_userdata(minimal_cfg)
+    assert "Add-LocalGroupMember" not in script
+
+
+def test_admin_principals_injected_into_phase2(minimal_cfg: WindowsDomainConfig) -> None:
+    """Each selected principal appears in the Phase 2 script."""
+    minimal_cfg.admin_principals = ["Domain Admins", "john.smith"]
+    script = build_windows_userdata(minimal_cfg)
+    phase2 = _decode_phase2(script)
+    assert "Add-LocalGroupMember" in phase2
+    assert "Domain Admins" in phase2
+    assert "john.smith" in phase2
+
+
+def test_admin_block_is_non_fatal(minimal_cfg: WindowsDomainConfig) -> None:
+    """Each Add-LocalGroupMember call has its own try/catch so failures are non-fatal."""
+    minimal_cfg.admin_principals = ["IT-Helpdesk"]
+    script = build_windows_userdata(minimal_cfg)
+    phase2 = _decode_phase2(script)
+    # A [WARN] log message must exist inside a catch block
+    assert "[WARN]" in phase2
+    assert "catch" in phase2
+
+
+def test_phase2_generated_with_only_principals(minimal_cfg: WindowsDomainConfig) -> None:
+    """Phase 2 is created even when description is blank, as long as principals are set."""
+    minimal_cfg.description = ""          # no description
+    minimal_cfg.admin_principals = ["Server-Operators"]
+    script = build_windows_userdata(minimal_cfg)
+    # Phase 2 block exists (base64 variable present)
+    assert '$b64 = "' in script
+    phase2 = _decode_phase2(script)
+    assert "Server-Operators" in phase2
+    # SSM credential fetch must NOT be present (no description = no creds needed)
+    assert "Get-SSMParameter" not in phase2
+
+
+def test_phase2_has_ssm_creds_only_when_description_set(minimal_cfg: WindowsDomainConfig) -> None:
+    """SSM credential fetch only runs when a description is also configured."""
+    minimal_cfg.description = "Prod server"
+    minimal_cfg.admin_principals = ["Domain Admins"]
+    script = build_windows_userdata(minimal_cfg)
+    phase2 = _decode_phase2(script)
+    # Both SSM calls AND admin block should be present
+    assert "Get-SSMParameter" in phase2
+    assert "Add-LocalGroupMember" in phase2

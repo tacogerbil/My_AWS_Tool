@@ -76,6 +76,9 @@ class WindowsDomainConfig:
     description: str = ""     # AD computer object description (post-join)
     iam_profile: Optional[str] = None     # IAM instance profile name or ARN for SSM access
     ssm_endpoint_override: Optional[str] = None  # Pin SSM traffic to a specific IP (bypass DNS)
+    admin_principals: List[str] = field(default_factory=list)
+    # sAMAccountNames of AD users/groups to add to local Administrators on first boot
+    # e.g. ["Domain Admins", "john.smith"].  Domain prefix prepended in PowerShell via $env:USERDOMAIN.
 
 
 @dataclass

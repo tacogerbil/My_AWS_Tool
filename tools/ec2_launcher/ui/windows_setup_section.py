@@ -14,7 +14,7 @@ Public API (used by ConfigForm):
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -30,14 +31,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.models import OrgUnit
+from core.models import AdPrincipal, OrgUnit
 from tools.ec2_launcher.models import WindowsDomainConfig
 from ui.common.widgets import SearchableComboBox
 
-_STATUS_IDLE    = ""
-_STATUS_QUERYING = "Querying AD…"
-_STATUS_OK_TPL  = "✓ {n} containers/OUs loaded"
-_STATUS_ERR_TPL = "✗ {msg}"
+_STATUS_IDLE     = ""
+_STATUS_QUERYING  = "Querying AD…"
+_STATUS_OK_TPL   = "✓ {n} containers/OUs loaded"
+_STATUS_ERR_TPL  = "✗ {msg}"
+_STATUS_PRIN_OK  = "✓ {n} principals loaded"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +77,37 @@ class _AdQueryThread(QThread):
             self.error.emit(str(exc))
 
 
+class _AdPrincipalsQueryThread(QThread):
+    """Runs query_principals_tree() off the UI thread."""
+
+    result: Signal = Signal(list)   # List[AdPrincipal]
+    error:  Signal = Signal(str)
+
+    def __init__(
+        self,
+        dc_host: str,
+        domain: str,
+        username: str,
+        password: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._dc_host  = dc_host
+        self._domain   = domain
+        self._username = username
+        self._password = password
+
+    def run(self) -> None:
+        try:
+            from adapters.ad_adapter import query_principals_tree
+            principals = query_principals_tree(
+                self._dc_host, self._domain, self._username, self._password
+            )
+            self.result.emit(principals)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+
+
 # ---------------------------------------------------------------------------
 # WindowsSetupSection
 # ---------------------------------------------------------------------------
@@ -85,7 +118,9 @@ class WindowsSetupSection(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._ous: List[OrgUnit] = []
+        self._principals: List[AdPrincipal] = []
         self._query_thread: Optional[_AdQueryThread] = None
+        self._principals_thread: Optional[_AdPrincipalsQueryThread] = None
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
@@ -94,6 +129,7 @@ class WindowsSetupSection(QWidget):
         outer.addWidget(self._build_credentials_group())
         outer.addWidget(self._build_placement_group())
         outer.addWidget(self._build_computer_group())
+        outer.addWidget(self._build_local_admins_group())
 
     # ------------------------------------------------------------------
     # Public API
@@ -120,6 +156,7 @@ class WindowsSetupSection(QWidget):
             description            = self._description.text().strip(),
             iam_profile            = iam_profile_text if iam_profile_text else None,
             ssm_endpoint_override  = self.get_ssm_endpoint_override(),
+            admin_principals       = self._get_selected_admin_principals(),
         )
 
     def get_dns_servers(self) -> List[str]:
@@ -275,12 +312,74 @@ class WindowsSetupSection(QWidget):
         form.addRow("Permission Profile:", self._iam_profile)
         return box
 
+    def _build_local_admins_group(self) -> QGroupBox:
+        """Build the Local Administrators picker panel.
+
+        Mirrors the OU Placement panel:
+        - [Query AD Principals] button + status label
+        - Filter text box (real-time recursive tree filter)
+        - QTreeWidget: OU/container folder nodes (non-checkable) + user/group
+          leaf nodes (checkable via checkbox)
+        - Selected principals QListWidget (read-only mirror of checked items)
+        """
+        box = QGroupBox("Local Administrators")
+        layout = QVBoxLayout(box)
+
+        # -- Query row --
+        query_row = QHBoxLayout()
+        self._principals_btn = QPushButton("Query AD Principals")
+        self._principals_btn.setFixedWidth(170)
+        self._principals_btn.clicked.connect(self._on_query_principals)
+        self._principals_status_lbl = QLabel(_STATUS_IDLE)
+        self._principals_status_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        query_row.addWidget(self._principals_btn)
+        query_row.addWidget(self._principals_status_lbl)
+        query_row.addStretch()
+        layout.addLayout(query_row)
+
+        layout.addWidget(QLabel(
+            "Uses the Domain / DC Host / Username / Password already filled in above."
+        ))
+
+        # -- Filter box --
+        self._principals_search = QLineEdit()
+        self._principals_search.setPlaceholderText("Filter users/groups…")
+        self._principals_search.textChanged.connect(self._on_principals_filter_changed)
+        layout.addWidget(self._principals_search)
+
+        # -- Principals tree --
+        self._principals_tree = QTreeWidget()
+        self._principals_tree.setHeaderHidden(True)
+        self._principals_tree.setMinimumHeight(220)
+        self._principals_tree.setStyleSheet(
+            "QTreeWidget { border: 1px solid #ced4da; border-radius: 4px; padding: 4px; }"
+        )
+        # itemChanged fires when a checkbox is toggled
+        self._principals_tree.itemChanged.connect(self._on_principal_checked)
+        layout.addWidget(self._principals_tree)
+
+        # -- Selected principals list --
+        layout.addWidget(QLabel("Selected principals:"))
+        self._selected_principals_list = QListWidget()
+        self._selected_principals_list.setMaximumHeight(110)
+        self._selected_principals_list.setStyleSheet(
+            "QListWidget {"
+            "  border: 1px solid #ced4da;"
+            "  border-radius: 4px;"
+            "  padding: 4px;"
+            "  background: #f8f9fa;"
+            "}"
+        )
+        layout.addWidget(self._selected_principals_list)
+
+        return box
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
     def _on_query(self) -> None:
-        """Validate inputs then kick off the background LDAP query."""
+        """Validate inputs then kick off the background LDAP query for OUs."""
         domain   = self._domain.text().strip()
         dc_host  = self._dc_host.text().strip()
         username = self._username.text().strip()
@@ -359,3 +458,158 @@ class WindowsSetupSection(QWidget):
 
     def _on_query_error(self, msg: str) -> None:
         self._status_lbl.setText(_STATUS_ERR_TPL.format(msg=msg))
+
+    # ------------------------------------------------------------------
+    # Slots — principals tree
+    # ------------------------------------------------------------------
+
+    def _on_query_principals(self) -> None:
+        """Validate inputs then kick off the background LDAP principals query."""
+        domain   = self._domain.text().strip()
+        dc_host  = self._dc_host.text().strip()
+        username = self._username.text().strip()
+        password = self._password.text()
+
+        missing = [f for f, v in [
+            ("Domain", domain), ("DC Host", dc_host),
+            ("Username", username), ("Password", password),
+        ] if not v]
+        if missing:
+            self._principals_status_lbl.setText(
+                _STATUS_ERR_TPL.format(msg=f"Fill in above: {', '.join(missing)}")
+            )
+            return
+
+        self._principals_btn.setEnabled(False)
+        self._principals_status_lbl.setText(_STATUS_QUERYING)
+
+        self._principals_thread = _AdPrincipalsQueryThread(
+            dc_host, domain, username, password, self
+        )
+        self._principals_thread.result.connect(self._on_principals_result)
+        self._principals_thread.error.connect(self._on_principals_error)
+        self._principals_thread.finished.connect(
+            lambda: self._principals_btn.setEnabled(True)
+        )
+        self._principals_thread.start()
+
+    def _on_principals_result(self, principals: List[AdPrincipal]) -> None:
+        """Populate the principals tree with folder nodes (OUs) and leaf nodes."""
+        self._principals = principals
+        # Block signals during bulk population to avoid per-item _on_principal_checked
+        self._principals_tree.blockSignals(True)
+        self._principals_tree.clear()
+
+        folder_nodes: dict[str, QTreeWidgetItem] = {}  # keyed by ou_dn.upper()
+
+        # Collect every unique ancestor OU DN needed to build the folder skeleton.
+        # Walk up each principal's ou_dn until we hit the DC= root.
+        all_ou_dns: set[str] = set()
+        for p in principals:
+            dn = p.ou_dn
+            while dn and not dn.upper().startswith("DC="):
+                all_ou_dns.add(dn)
+                idx = dn.find(",")
+                if idx == -1:
+                    break
+                dn = dn[idx + 1:]
+
+        # Sort shallower OUs first so parents exist before their children.
+        def _ou_depth(dn: str) -> int:
+            return dn.upper().count("OU=") + dn.upper().count("CN=")
+
+        for ou_dn in sorted(all_ou_dns, key=_ou_depth):
+            first_rdn = ou_dn.split(",")[0]
+            name = first_rdn.split("=", 1)[1] if "=" in first_rdn else first_rdn
+
+            parent_dn_raw = ou_dn[ou_dn.find(",") + 1:] if "," in ou_dn else ""
+
+            folder_item = QTreeWidgetItem([f"📁 {name}"])
+            # Folder nodes: navigational only — not checkable, not selectable
+            folder_item.setFlags(Qt.ItemIsEnabled)
+            folder_item.setData(0, Qt.UserRole, None)
+
+            parent_item = folder_nodes.get(parent_dn_raw.upper())
+            if parent_item:
+                parent_item.addChild(folder_item)
+            else:
+                self._principals_tree.addTopLevelItem(folder_item)
+
+            folder_nodes[ou_dn.upper()] = folder_item
+
+        # Add user/group leaf nodes under their parent folder
+        for p in principals:
+            icon  = "👥" if p.principal_type == "group" else "👤"
+            label = f"{icon} {p.display_name}"
+
+            leaf = QTreeWidgetItem([label])
+            leaf.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            leaf.setCheckState(0, Qt.Unchecked)
+            leaf.setData(0, Qt.UserRole, p.sam_account_name)
+
+            parent_item = folder_nodes.get(p.ou_dn.upper())
+            if parent_item:
+                parent_item.addChild(leaf)
+            else:
+                # Fallback: principal lives directly under domain root
+                self._principals_tree.addTopLevelItem(leaf)
+
+        self._principals_tree.expandAll()
+        self._principals_tree.blockSignals(False)
+        self._principals_status_lbl.setText(_STATUS_PRIN_OK.format(n=len(principals)))
+
+    def _on_principals_filter_changed(self, text: str) -> None:
+        """Recursively show/hide tree nodes based on partial text match."""
+        text = text.lower()
+
+        def _filter_node(item: QTreeWidgetItem) -> bool:
+            matches = text in item.text(0).lower()
+            any_child_visible = False
+            for i in range(item.childCount()):
+                if _filter_node(item.child(i)):
+                    any_child_visible = True
+            visible = matches or any_child_visible
+            item.setHidden(not visible)
+            if text and any_child_visible:
+                item.setExpanded(True)
+            return visible
+
+        for i in range(self._principals_tree.topLevelItemCount()):
+            _filter_node(self._principals_tree.topLevelItem(i))
+
+    def _on_principal_checked(self, _item: QTreeWidgetItem, _column: int) -> None:
+        """Rebuild the selected-principals list whenever a checkbox toggles."""
+        self._rebuild_selected_list()
+
+    def _on_principals_error(self, msg: str) -> None:
+        self._principals_status_lbl.setText(_STATUS_ERR_TPL.format(msg=msg))
+
+    def _rebuild_selected_list(self) -> None:
+        """Repopulate the selected-principals QListWidget from checked leaf nodes."""
+        self._selected_principals_list.clear()
+        for sam, display in self._collect_checked_leaves(
+            self._principals_tree.invisibleRootItem()
+        ):
+            self._selected_principals_list.addItem(f"{display}   ({sam})")
+
+    def _collect_checked_leaves(
+        self, parent: QTreeWidgetItem
+    ) -> List[tuple[str, str]]:
+        """Return (sam_account_name, display_text) for every checked leaf node."""
+        results: List[tuple[str, str]] = []
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            sam = child.data(0, Qt.UserRole)
+            if sam is not None and child.checkState(0) == Qt.Checked:
+                results.append((sam, child.text(0)))
+            results.extend(self._collect_checked_leaves(child))
+        return results
+
+    def _get_selected_admin_principals(self) -> List[str]:
+        """Return sAMAccountNames of all checked principals."""
+        return [
+            sam
+            for sam, _ in self._collect_checked_leaves(
+                self._principals_tree.invisibleRootItem()
+            )
+        ]

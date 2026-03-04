@@ -14,7 +14,7 @@ import logging
 from contextlib import contextmanager
 from typing import Generator, List, Optional, Tuple
 
-from core.models import OrgUnit
+from core.models import AdPrincipal, OrgUnit
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,82 @@ def query_org_units(
 
     logger.info("AD query returned %d OUs/Containers", len(results))
     return sorted(results, key=lambda o: (o.depth, o.name.lower()))
+
+
+def query_principals_tree(
+    dc_host: str,
+    domain: str,
+    username: str,
+    password: str,
+) -> List[AdPrincipal]:
+    """Query all user and group objects from AD for local-Administrators assignment.
+
+    Returns a flat list of AdPrincipal objects sorted groups-first then alphabetically.
+    The UI builds the directory tree by grouping principals by their ou_dn.
+    Computer accounts are excluded; only human users and security groups are returned.
+
+    Parameters
+    ----------
+    dc_host:  Hostname or IP of a domain controller.
+    domain:   FQDN of the domain (e.g. "corp.example.com").
+    username: DOMAIN\\user or UPN format.
+    password: In-memory only; never written to disk.
+
+    Returns
+    -------
+    Flat list of AdPrincipal sorted by type (groups first) then display name.
+
+    Raises
+    ------
+    RuntimeError  if ldap3 is not installed.
+    Exception     on connection or authentication failure (caller handles display).
+    """
+    try:
+        from ldap3 import SUBTREE
+    except ImportError as exc:
+        raise RuntimeError(
+            "ldap3 is required for AD queries.  Install it: pip install ldap3"
+        ) from exc
+
+    # Exclude computer objects: they inherit objectClass=user in the AD schema
+    # but are not human accounts and should not appear in the principals picker.
+    search_filter = "(&(|(objectClass=group)(objectClass=user))(!(objectClass=computer)))"
+
+    with _ldap_connect(dc_host, domain, username, password) as (conn, base_dn):
+        conn.search(
+            search_base=base_dn,
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=["sAMAccountName", "cn", "objectClass", "distinguishedName"],
+        )
+
+        results: List[AdPrincipal] = []
+        for entry in conn.entries:
+            dn        = str(entry.distinguishedName)
+            sam       = str(entry.sAMAccountName) if entry.sAMAccountName else ""
+            display   = str(entry.cn)             if entry.cn             else sam
+            classes   = [c.lower() for c in entry.objectClass]
+
+            # Skip entries with no sAMAccountName (e.g. built-in pseudo-objects)
+            if not sam or sam.lower() == "none":
+                continue
+
+            principal_type = "group" if "group" in classes else "user"
+
+            # Derive parent OU/Container DN by stripping the first RDN component
+            idx    = dn.find(",")
+            ou_dn  = dn[idx + 1:] if idx != -1 else base_dn
+
+            results.append(AdPrincipal(
+                sam_account_name=sam,
+                display_name=display,
+                principal_type=principal_type,
+                ou_dn=ou_dn,
+            ))
+
+    logger.info("AD principals query returned %d users/groups", len(results))
+    # Groups first (easier to find security groups at top), then users, both alphabetical
+    return sorted(results, key=lambda p: (0 if p.principal_type == "group" else 1, p.display_name.lower()))
 
 
 def check_computer_exists(

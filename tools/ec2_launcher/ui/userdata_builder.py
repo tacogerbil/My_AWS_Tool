@@ -67,7 +67,13 @@ def build_windows_userdata(
         else ""
     )
 
-    phase2 = _build_phase2(ssm_user, ssm_pass, cfg.description, endpoint_arg) if cfg.description else ""
+    admin_principals = list(cfg.admin_principals or [])
+    needs_phase2 = bool(cfg.description or admin_principals)
+    phase2 = (
+        _build_phase2(ssm_user, ssm_pass, cfg.description, admin_principals, endpoint_arg)
+        if needs_phase2
+        else ""
+    )
 
     lines = _build_phase1(
         domain=cfg.domain,
@@ -121,20 +127,51 @@ def _build_tag_helper() -> List[str]:
     ]
 
 
-def _build_phase2(ssm_user: str, ssm_pass: str, description: str, endpoint_arg: str) -> str:
-    """Base64-encode the Phase 2 script so it embeds safely in Phase 1."""
-    safe_desc = _escape_ps_dq(description)
-    tag_done  = f'_Set-InstanceTag "{DOMAIN_JOIN_TAG_KEY}" "$(Get-Date -Format \'HH:mm:ss\') \u2014 Complete"'
-    script_lines = [
+def _build_phase2(
+    ssm_user: str,
+    ssm_pass: str,
+    description: str,
+    admin_principals: List[str],
+    endpoint_arg: str,
+) -> str:
+    """Base64-encode the Phase 2 script so it embeds safely in Phase 1.
+
+    Runs as SYSTEM via a scheduled task on the second boot (post domain join).
+
+    - description:       If non-empty, fetches SSM creds and runs Set-ADComputer.
+    - admin_principals:  If non-empty, calls Add-LocalGroupMember for each entry.
+                         No domain credentials needed — SYSTEM on a domain-joined
+                         machine can add to local groups directly.
+    """
+    tag_done = (
+        f'_Set-InstanceTag "{DOMAIN_JOIN_TAG_KEY}" '
+        f'"$(Get-Date -Format \'HH:mm:ss\') \u2014 Complete"'
+    )
+
+    script_lines: List[str] = [
         "Import-Module ActiveDirectory -ErrorAction SilentlyContinue",
-        f'$u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true{endpoint_arg}).Value',
-        f'$p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true{endpoint_arg}).Value `',
-        "      | ConvertTo-SecureString -AsPlainText -Force",
-        "$c = New-Object System.Management.Automation.PSCredential($u, $p)",
-        f'Set-ADComputer -Identity $env:COMPUTERNAME -Description "{safe_desc}" -Credential $c',
-        f'{tag_done}',
+    ]
+
+    # SSM credential fetch + AD description — only when a description is configured
+    if description:
+        safe_desc = _escape_ps_dq(description)
+        script_lines += [
+            f'$u = (Get-SSMParameter -Name "{ssm_user}" -WithDecryption $true{endpoint_arg}).Value',
+            f'$p = (Get-SSMParameter -Name "{ssm_pass}" -WithDecryption $true{endpoint_arg}).Value `',
+            "      | ConvertTo-SecureString -AsPlainText -Force",
+            "$c = New-Object System.Management.Automation.PSCredential($u, $p)",
+            f'Set-ADComputer -Identity $env:COMPUTERNAME -Description "{safe_desc}" -Credential $c',
+        ]
+
+    # Local-Administrators assignment — no domain creds needed (runs as SYSTEM)
+    if admin_principals:
+        script_lines += _build_admin_principals_block(admin_principals)
+
+    script_lines += [
+        tag_done,
         'Unregister-ScheduledTask -TaskName "LauncherPhase2" -Confirm:$false',
     ]
+
     raw = "\n".join(script_lines).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
 
@@ -273,3 +310,30 @@ def _build_phase1(
 def _escape_ps_dq(text: str) -> str:
     """Escape text for safe embedding inside a PowerShell double-quoted string."""
     return text.replace("`", "``").replace('"', '`"').replace("$", "`$")
+
+
+def _build_admin_principals_block(principals: List[str]) -> List[str]:
+    """Return PowerShell lines that add each AD principal to local Administrators.
+
+    Each Add-LocalGroupMember call is wrapped in its own try/catch so a bad
+    principal name (typo, deleted account) is non-fatal: it logs a warning and
+    continues.  The domain short-name is derived at runtime from $env:USERDOMAIN
+    so the script stays portable across domains.
+
+    No SSM credentials are needed — SYSTEM can modify local groups directly on
+    any domain-joined Windows machine.
+    """
+    lines: List[str] = [
+        "",
+        "# Add selected AD principals to local Administrators",
+        "$_domain = $env:USERDOMAIN",
+    ]
+    for principal in principals:
+        safe = _escape_ps_dq(principal)
+        lines.append(
+            f'try {{ Add-LocalGroupMember -Group "Administrators"'
+            f' -Member "$_domain\\{safe}" -ErrorAction Stop;'
+            f' Write-Log "Added to local Admins: $_domain\\{safe}" }}'
+            f' catch {{ Write-Log "  [WARN] Could not add $_domain\\{safe} to local Admins: $_" }}'
+        )
+    return lines

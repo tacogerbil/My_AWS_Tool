@@ -108,6 +108,22 @@ class OrgUnit:
 
 
 @dataclass
+class AdPrincipal:
+    """An Active Directory user or group, for local-Administrators assignment.
+
+    Returned by adapters.ad_adapter.query_principals_tree().
+    The UI uses ou_dn to reconstruct the AD directory tree; the leaf nodes
+    are selectable with checkboxes.  sam_account_name is passed to the
+    PowerShell Add-LocalGroupMember call on first boot.
+    """
+
+    sam_account_name: str   # e.g. "Domain Admins" or "john.smith"
+    display_name: str       # CN display name shown in the tree
+    principal_type: str     # "group" | "user"
+    ou_dn: str              # Parent OU/Container DN — used to build tree structure
+
+
+@dataclass
 class InstanceTypeInfo:
     """Metadata for an EC2 instance type.
 
