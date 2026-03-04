@@ -54,10 +54,18 @@ from ui.common.collapsible import CollapsibleSection
 # by the layout cell edge — a known Qt/Linux stylesheet rendering quirk.
 def _build_form_style() -> str:
     return """
-    QLineEdit, QComboBox {
+    QLineEdit {
         border: 1px solid #ced4da; border-radius: 4px;
         padding: 5px 10px; min-height: 28px;
         background: white; color: #2c3e50; font-size: 13px;
+    }
+    /* QComboBox must use pt (not px) — Qt stores px fonts as pointSize=-1
+       internally, which gets propagated to popup views and triggers:
+       "QFont::setPointSize: Point size <= 0 (-1)" */
+    QComboBox {
+        border: 1px solid #ced4da; border-radius: 4px;
+        padding: 5px 10px; min-height: 28px;
+        background: white; color: #2c3e50; font-size: 10pt;
     }
     QLineEdit:focus, QComboBox:focus { border-color: #3498db; }
     QSpinBox {

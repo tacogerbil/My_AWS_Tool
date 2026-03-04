@@ -23,17 +23,6 @@ class SearchableComboBox(QComboBox):
         self.pCompleter.setModel(self.model())
         self.setCompleter(self.pCompleter)
 
-        # Qt 6 bug workaround: the completer popup doesn't inherit the
-        # application font when it was set via stylesheet (not QApplication.setFont),
-        # causing point size to resolve to -1 and emitting a console warning.
-        # Propagating the widget's font explicitly prevents the warning.
-        popup = self.pCompleter.popup()
-        if popup is not None:
-            font = self.font()
-            if font.pointSize() <= 0:
-                font = QFont()  # fall back to the default system font
-            popup.setFont(font)
-
         self.currentIndexChanged.connect(self._reset_cursor)
         
         # Windows sometimes renders the popup view transparent
@@ -59,6 +48,24 @@ class SearchableComboBox(QComboBox):
         le = self.lineEdit()
         if le:
             le.home(False)
+
+    def showPopup(self) -> None:
+        """Ensure the completer popup has a valid font before it appears.
+
+        Qt 6 bug: when font-size is set in px via a stylesheet, Qt stores
+        pointSize as -1 internally.  Propagating this to the popup triggers
+        'QFont::setPointSize: Point size <= 0 (-1)'.  We fix the font on the
+        popup view at show-time (the first moment the resolved font is reliable).
+        """
+        for view in (self.pCompleter.popup(), self.view()):
+            if view is None:
+                continue
+            f = view.font()
+            if f.pointSize() <= 0:
+                fallback = QFont()
+                if fallback.pointSize() > 0:
+                    view.setFont(fallback)
+        super().showPopup()
 
 
 from PySide6.QtGui import QColor, QStandardItemModel, QStandardItem
