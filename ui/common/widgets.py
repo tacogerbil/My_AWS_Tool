@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QComboBox, QCompleter
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 
 class SearchableComboBox(QComboBox):
     """
@@ -21,6 +22,17 @@ class SearchableComboBox(QComboBox):
         # Initial Model Sync
         self.pCompleter.setModel(self.model())
         self.setCompleter(self.pCompleter)
+
+        # Qt 6 bug workaround: the completer popup doesn't inherit the
+        # application font when it was set via stylesheet (not QApplication.setFont),
+        # causing point size to resolve to -1 and emitting a console warning.
+        # Propagating the widget's font explicitly prevents the warning.
+        popup = self.pCompleter.popup()
+        if popup is not None:
+            font = self.font()
+            if font.pointSize() <= 0:
+                font = QFont()  # fall back to the default system font
+            popup.setFont(font)
 
         self.currentIndexChanged.connect(self._reset_cursor)
         
