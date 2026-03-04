@@ -2,7 +2,7 @@
 windows_setup_section.py — Windows domain-join configuration section.
 
 Three sub-panels:
-  1. Credentials  — domain, DC host, username, password, SSM path
+  1. Credentials  — domain, DC host, username, password, SSM path, timezone
   2. Placement    — [Query AD] button + searchable OU/Container dropdown
   3. Computer     — AD description field + IAM instance profile
 
@@ -10,6 +10,8 @@ Public API (used by ConfigForm):
     get_domain_config() -> Optional[WindowsDomainConfig]
         Returns a populated WindowsDomainConfig if the section has enough
         data to perform a domain join, otherwise None.
+    get_timezone() -> str
+        Returns the Windows tzutil timezone ID (always non-empty).
 """
 
 from __future__ import annotations
@@ -159,6 +161,10 @@ class WindowsSetupSection(QWidget):
             admin_principals       = self._get_selected_admin_principals(),
         )
 
+    def get_timezone(self) -> str:
+        """Windows tzutil timezone ID applied at first boot via UserData."""
+        return self._timezone_edit.text().strip() or "Pacific Standard Time"
+
     def get_dns_servers(self) -> List[str]:
         """Return list of DNS server IPs from the comma-separated field.
 
@@ -235,6 +241,15 @@ class WindowsSetupSection(QWidget):
         )
         self._ssm_endpoint_override.textChanged.connect(lambda t: set_pref("win_ssm_ip", t))
 
+        self._timezone_edit = QLineEdit(get_pref("win_timezone", "Pacific Standard Time"))
+        self._timezone_edit.setPlaceholderText("e.g. Pacific Standard Time")
+        self._timezone_edit.setToolTip(
+            "Windows timezone identifier applied via 'tzutil /s' on first boot.\n"
+            "Examples: Pacific Standard Time, Eastern Standard Time, UTC\n"
+            "Run 'tzutil /l' on any Windows machine for a full list."
+        )
+        self._timezone_edit.textChanged.connect(lambda t: set_pref("win_timezone", t))
+
         self._domain.textChanged.connect(lambda t: set_pref("win_domain", t))
         self._dc_host.textChanged.connect(lambda t: set_pref("win_dchost", t))
         self._username.textChanged.connect(lambda t: set_pref("win_user", t))
@@ -248,6 +263,7 @@ class WindowsSetupSection(QWidget):
             ("SSM Path:", self._ssm_path),
             ("DNS Servers:", self._dns_servers),
             ("SSM Endpoint IP:", self._ssm_endpoint_override),
+            ("Timezone:", self._timezone_edit),
         ]:
             form.addRow(label, widget)
 
