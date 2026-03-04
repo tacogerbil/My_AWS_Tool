@@ -48,8 +48,8 @@ _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
 _HINT_STYLE = (
-    "background: #fffde7; border: 1px solid #f9a825; border-radius: 4px;"
-    "padding: 4px 8px; color: #5d4037; font-size: 11px;"
+    "background: #fffde7; border: 1px solid #f9a825; border-radius: 3px;"
+    "padding: 2px 6px; color: #5d4037; font-size: 10px; font-style: italic;"
 )
 
 
