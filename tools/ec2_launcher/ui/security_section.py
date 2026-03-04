@@ -47,6 +47,19 @@ from ui.common.widgets import CheckableComboBox, SearchableComboBox
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
+_HINT_STYLE = (
+    "background: #fffde7; border: 1px solid #f9a825; border-radius: 4px;"
+    "padding: 4px 8px; color: #5d4037; font-size: 11px;"
+)
+
+
+def _policy_hint(text: str) -> QLabel:
+    """Return a styled amber hint label for policy guidance."""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(_HINT_STYLE)
+    return lbl
+
 # Rule-type → (protocol, default_port)
 _RULE_TYPE_MAP: Dict[str, tuple] = {
     "SSH":          ("tcp",  "22"),
@@ -331,12 +344,15 @@ class SecuritySection(QWidget):
         layout = QVBoxLayout(box)
         layout.setSpacing(6)
 
-        # Searchable, checkable dropdown
+        layout.addWidget(_policy_hint(
+            "📌 SCCM: If this instance requires SCCM management, ensure the SCCM "
+            "security group is included here in addition to any other groups."
+        ))
+
         self._sg_combo = CheckableComboBox()
         self._sg_combo.lineEdit().setPlaceholderText("Select security groups…")
         layout.addWidget(self._sg_combo)
 
-        # Count label + copy-as-template button
         ctrl_row = QHBoxLayout()
         self._sg_count_lbl = QLabel("None selected")
         self._sg_count_lbl.setStyleSheet("color: #555; font-size: 11px;")

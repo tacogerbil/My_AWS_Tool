@@ -20,12 +20,14 @@ from typing import List, Optional, Set
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -42,6 +44,19 @@ _STATUS_QUERYING  = "Querying AD…"
 _STATUS_OK_TPL   = "✓ {n} containers/OUs loaded"
 _STATUS_ERR_TPL  = "✗ {msg}"
 _STATUS_PRIN_OK  = "✓ {n} principals loaded"
+
+_HINT_STYLE = (
+    "background: #fffde7; border: 1px solid #f9a825; border-radius: 4px;"
+    "padding: 4px 8px; color: #5d4037; font-size: 11px;"
+)
+
+
+def _policy_hint(text: str) -> QLabel:
+    """Return a styled amber hint label for policy guidance."""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(_HINT_STYLE)
+    return lbl
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +277,19 @@ class WindowsSetupSection(QWidget):
             ("Password:", self._password),
             ("SSM Path:", self._ssm_path),
             ("DNS Servers:", self._dns_servers),
-            ("SSM Endpoint IP:", self._ssm_endpoint_override),
-            ("Timezone:", self._timezone_edit),
         ]:
             form.addRow(label, widget)
+
+        form.addRow("", _policy_hint(
+            "⚠  Policy: DNS servers must point to the Domain Controllers, not AWS-provided DNS. "
+            "AWS DNS (169.254.169.253) cannot resolve internal domain names."
+        ))
+
+        form.addRow("SSM Endpoint IP:", self._ssm_endpoint_override)
+        form.addRow("Timezone:", self._timezone_edit)
+        form.addRow("", _policy_hint(
+            "⚠  Policy: All servers must use Pacific Standard Time."
+        ))
 
         return box
 

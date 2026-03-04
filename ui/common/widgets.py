@@ -3,29 +3,24 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 class SearchableComboBox(QComboBox):
-    """
-    A QComboBox that allows fuzzy/partial searching of its items.
-    MCCC: Reusable, Single Responsibility (Enhanced Selection).
-    """
+    """Editable QComboBox with case-insensitive substring completion."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.NoInsert)
-        
-        # Explicitly create completer to ensure correct behavior
-        # QComboBox creates one by default, but we want full control
+
         self.pCompleter = QCompleter(self)
         self.pCompleter.setCompletionMode(QCompleter.PopupCompletion)
         self.pCompleter.setFilterMode(Qt.MatchContains)
         self.pCompleter.setCaseSensitivity(Qt.CaseInsensitive)
-        
-        # Initial Model Sync
+
         self.pCompleter.setModel(self.model())
         self.setCompleter(self.pCompleter)
 
         self.currentIndexChanged.connect(self._reset_cursor)
-        
-        # Windows sometimes renders the popup view transparent
+
+        # Ensure popup background is opaque on Windows.
         self.setStyleSheet("QComboBox QAbstractItemView { background-color: #ffffff; color: #000000; selection-background-color: #e0e0e0; }")
         self.view().setStyleSheet("background-color: #ffffff; color: #000000;")
 
@@ -37,8 +32,6 @@ class SearchableComboBox(QComboBox):
 
     def addItem(self, text, userData=None):
         super().addItem(text, userData)
-        # Completer usually auto-syncs because it shares the model, but sometimes needs a kick
-        # Here we rely on shared model.
 
     def addItems(self, texts):
         super().addItems(texts)

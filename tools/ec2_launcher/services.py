@@ -225,11 +225,15 @@ class LauncherService:
             raise
 
     def list_instance_profiles(self) -> List[str]:
-        """Return all IAM instance profile names available in the account."""
+        """Return all IAM instance profile names available in the account.
+
+        Returns an empty list (silently) when the caller's credentials do not
+        include iam:ListInstanceProfiles — the field is optional in the UI.
+        """
         try:
             return self.adapter.list_instance_profiles()
         except Exception as exc:
-            logger.error("Error listing instance profiles: %s", exc)
+            logger.debug("Instance profiles unavailable: %s", exc)
             return []
 
     def create_key_pair(

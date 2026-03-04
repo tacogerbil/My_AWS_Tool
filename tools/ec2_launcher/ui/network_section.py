@@ -40,6 +40,19 @@ from ui.common.widgets import SearchableComboBox
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
+_HINT_STYLE = (
+    "background: #fffde7; border: 1px solid #f9a825; border-radius: 4px;"
+    "padding: 4px 8px; color: #5d4037; font-size: 11px;"
+)
+
+
+def _policy_hint(text: str) -> QLabel:
+    """Return a styled amber hint label for policy guidance."""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(_HINT_STYLE)
+    return lbl
+
 
 class NetworkSection(QWidget):
     """VPC / Subnet selectors with VpcBadge color coding."""
@@ -103,6 +116,10 @@ class NetworkSection(QWidget):
             "Only select 'Optional' if a specific workload requires IMDSv1."
         )
         net_form.addRow("Metadata (IMDSv2):", self._imdsv2_combo)
+        net_form.addRow("", _policy_hint(
+            "⚠  Policy: IMDSv2 must be set to Required at all times. "
+            "IMDSv1 is disabled by default in this environment."
+        ))
 
         self._term_protect_chk = QCheckBox("Enable termination protection")
         self._term_protect_chk.setChecked(True)
@@ -111,8 +128,16 @@ class NetworkSection(QWidget):
             "Highly recommended for production instances."
         )
         net_form.addRow("Termination:", self._term_protect_chk)
+        net_form.addRow("", _policy_hint(
+            "⚠  Policy: Termination protection must always remain enabled on production instances."
+        ))
 
         layout.addLayout(net_form)
+
+        layout.addWidget(_policy_hint(
+            "📌 SCCM: Instances that require SCCM management must include the SCCM "
+            "security group in the Security section in addition to any other groups."
+        ))
 
     # ------------------------------------------------------------------
     # Public API

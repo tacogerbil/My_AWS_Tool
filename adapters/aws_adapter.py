@@ -297,7 +297,10 @@ class AwsAdapter(CloudProviderPort):
             ]
             return sorted(names)
         except (ClientError, BotoCoreError) as exc:
-            logger.error("Error listing instance profiles: %s", exc)
+            # AccessDenied here is expected when the caller's IAM credentials
+            # don't include iam:ListInstanceProfiles.  The field is optional,
+            # so we degrade gracefully to an empty list rather than erroring.
+            logger.debug("list_instance_profiles unavailable (likely IAM permission): %s", exc)
             return []
 
     def list_key_pairs(self, region: str) -> List[KeyPair]:
