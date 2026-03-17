@@ -39,14 +39,21 @@ from core.models import Ami
 _ERROR_STYLE = "border: 1px solid #e74c3c;"
 _NORMAL_STYLE = ""
 
-# OS category → lowercase substrings matched against ami.name
+# Above this many AMIs in the My AMIs list, require a search string
+# before populating the combo — avoids freezing the UI thread.
+_MAX_COMBO_ITEMS = 300
+
+# OS category → lowercase substrings matched against ami.name.
+# Must cover both AWS console-style names ("Amazon Linux 2023") AND
+# the actual AMI name prefixes AWS uses in describe_images results
+# (e.g. "al2023-ami-...", "amzn2-ami-hvm-...", "Windows_Server-...").
 _OS_FILTERS = {
-    "Amazon Linux": ["amazon linux"],
-    "macOS":        ["macos", "mac os"],
+    "Amazon Linux": ["amazon linux", "al2023", "amzn2", "amzn-ami"],
+    "macOS":        ["macos", "mac os", "mac-"],
     "Ubuntu":       ["ubuntu"],
     "Windows":      ["windows"],
     "Red Hat":      ["red hat", "rhel"],
-    "SUSE":         ["suse"],
+    "SUSE":         ["suse", "sles"],
     "Debian":       ["debian"],
     "All":          [],
 }
@@ -186,6 +193,12 @@ class AmiSection(QWidget):
         self._my_search.setClearButtonEnabled(True)
         layout.addWidget(self._my_search)
 
+        self._my_status_label = QLabel("")
+        self._my_status_label.setStyleSheet(
+            "color: #6c757d; font-size: 11px; padding: 2px 0;"
+        )
+        layout.addWidget(self._my_status_label)
+
         self._my_combo = QComboBox()
         layout.addWidget(self._my_combo)
 
@@ -280,15 +293,45 @@ class AmiSection(QWidget):
             a for a in self._my_amis
             if not shared or any(t.key == "CreatedBy" for t in a.tags)
         ]
-        self._rebuild_combo(self._my_combo, self._my_source,
-                            self._my_search.text() if hasattr(self, "_my_search") else "")
+        search_text = self._my_search.text() if hasattr(self, "_my_search") else ""
+        total = len(self._my_source)
+        if total > _MAX_COMBO_ITEMS and not search_text.strip():
+            # Too many to populate all at once — require a search string first.
+            self._my_combo.blockSignals(True)
+            self._my_combo.clear()
+            self._my_combo.blockSignals(False)
+            if hasattr(self, "_my_status_label"):
+                self._my_status_label.setText(
+                    f"{total:,} AMIs — type in the search box to filter"
+                )
+            self._on_changed()
+        else:
+            if hasattr(self, "_my_status_label"):
+                self._my_status_label.setText("")
+            self._rebuild_combo(self._my_combo, self._my_source, search_text)
 
     def _on_my_search(self, text: str) -> None:
+        if not text.strip() and len(self._my_source) > _MAX_COMBO_ITEMS:
+            # Cleared search on a large list — go back to require-search state.
+            self._refresh_my_amis()
+            return
         self._rebuild_combo(self._my_combo, self._my_source, text)
+        if hasattr(self, "_my_status_label"):
+            shown = self._my_combo.count()
+            total = len(self._my_source)
+            if text.strip() and total > _MAX_COMBO_ITEMS:
+                self._my_status_label.setText(f"Showing {shown:,} of {total:,} AMIs")
 
     def _refresh_recents(self) -> None:
+        # Show only the most recently created AMIs — adding thousands here
+        # would freeze the UI thread.
         self._rec_combo.clear()
-        for ami in self._all_amis:
+        sorted_amis = sorted(
+            self._all_amis,
+            key=lambda a: a.creation_date or "",
+            reverse=True,
+        )
+        for ami in sorted_amis[:100]:
             self._rec_combo.addItem(f"{ami.name}  ({ami.image_id})", userData=ami.image_id)
         self._rec_combo.setCurrentIndex(-1)
 
@@ -305,6 +348,8 @@ class AmiSection(QWidget):
         idx = combo.findData(prev_data)
         if idx >= 0:
             combo.setCurrentIndex(idx)
+        elif combo.count() > 0:
+            combo.setCurrentIndex(0)  # auto-select first item on initial populate
         else:
             combo.setCurrentIndex(-1)
         combo.blockSignals(False)
