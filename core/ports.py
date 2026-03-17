@@ -170,3 +170,12 @@ class CloudProviderPort(ABC):
         plain-text values immediately after this call returns.
         """
         pass
+
+    @abstractmethod
+    def list_instance_type_offerings(self, region: str) -> List[str]:
+        """Return all EC2 instance type names available in the given region.
+
+        Results are sorted alphabetically.  Used to populate the instance-type
+        picker in the EC2 Launcher — callers cache the result for the session.
+        """
+        pass

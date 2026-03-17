@@ -148,10 +148,8 @@ class LauncherService:
     # ------------------------------------------------------------------
 
     def list_instance_types(self) -> List[str]:
-        return [
-            "t2.micro", "t3.micro", "t3.small", "t3.medium", "t3.large", "t3.xlarge",
-            "m5.large", "m5.xlarge", "c5.large", "c5.xlarge", "c6i.large", "r5.large",
-        ]
+        """Return all instance types available in the current region."""
+        return self.adapter.list_instance_type_offerings(self.region)
 
     def list_vpcs(self) -> List[Vpc]:
         try:

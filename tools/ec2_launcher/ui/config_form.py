@@ -17,7 +17,7 @@ Section order
 
 Public API
 ----------
-    set_data(amis, instance_types, vpcs, subnets, sgs, key_pairs)
+    set_data(my_amis, quick_start_amis, instance_types, vpcs, subnets, sgs, key_pairs)
     apply_patch(patch: SectionPatch)
     get_launch_config() -> Optional[LaunchConfig]
 """

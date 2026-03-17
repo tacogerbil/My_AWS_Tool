@@ -8,7 +8,6 @@ from core.models import (
 )
 from core.ports import CloudProviderPort, VmImportPort
 
-# MCCC: Explicit Logging Configuration
 logger = logging.getLogger(__name__)
 
 
@@ -390,6 +389,24 @@ class AwsAdapter(CloudProviderPort):
         for name, value in params.items():
             ssm.put_parameter(Name=name, Value=value, Type="SecureString", Overwrite=True)
             logger.info("SSM parameter stored: %s", name)
+
+    def list_instance_type_offerings(self, region: str) -> List[str]:
+        """Return all EC2 instance type names available in the given region."""
+        try:
+            ec2 = self._ec2_for(region)
+            paginator = ec2.get_paginator("describe_instance_type_offerings")
+            names: List[str] = [
+                offering["InstanceType"]
+                for page in paginator.paginate(
+                    LocationType="region",
+                    Filters=[{"Name": "location", "Values": [region]}],
+                )
+                for offering in page.get("InstanceTypeOfferings", [])
+            ]
+            return sorted(names)
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Failed to list instance type offerings: %s", exc)
+            return []
 
     def list_buckets(self) -> List[str]:
         """List all S3 buckets (global service)."""

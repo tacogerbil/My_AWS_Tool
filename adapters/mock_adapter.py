@@ -128,6 +128,15 @@ class MockAdapter(CloudProviderPort):
     def list_key_pairs(self, region: str) -> List[KeyPair]:
         return []
 
+    def list_instance_type_offerings(self, region: str) -> List[str]:
+        return [
+            "c5.large", "c5.xlarge", "c6i.large",
+            "m5.large", "m5.xlarge",
+            "r5.large",
+            "t2.micro",
+            "t3.micro", "t3.small", "t3.medium", "t3.large", "t3.xlarge",
+        ]
+
     def list_buckets(self) -> List[str]:
         return []
 
