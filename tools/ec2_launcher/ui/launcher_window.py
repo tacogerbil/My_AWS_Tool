@@ -436,7 +436,13 @@ class LauncherWindow(QWidget):
             )
             return None
 
-        userdata = build_windows_userdata(domain_cfg)
+        # Use timezone and DNS servers already resolved from the form into config,
+        # so this rebuild matches what get_launch_config() computed.
+        userdata = build_windows_userdata(
+            domain_cfg,
+            timezone=config.timezone,
+            dns_servers=config.dns_servers,
+        )
         iam_profile = domain_cfg.iam_profile or None
         return dataclasses.replace(
             config,

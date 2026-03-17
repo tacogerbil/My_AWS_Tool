@@ -222,7 +222,7 @@ class ConfigForm(QScrollArea):
         """Validate and return LaunchConfig, or None on validation failure."""
         errors: Dict[str, bool] = dict(
             image=False, instance_type=False, storage=False,
-            vpc=False, subnet=False, key=False
+            vpc=False, subnet=False, key=False, sg=False
         )
 
         image_id = self._image.get_image_id()
@@ -253,17 +253,24 @@ class ConfigForm(QScrollArea):
         if not key_name:
             errors["key"] = True
 
+        # At least one SG must be explicitly selected or a new SG form must be filled.
+        # AWS will NOT fall back to a default SG — launching with an empty list is
+        # a security violation in this environment.
+        sg_ids = self._security.get_sg_ids()
+        if not sg_ids and not self.has_pending_sg():
+            errors["sg"] = True
+
         self._image.mark_error(errors["image"])
         self._hardware.mark_error(errors["instance_type"])
         self._network.mark_error(errors["vpc"], errors["subnet"])
-        self._security.mark_error(errors["key"])
+        self._security.mark_error(errors["key"], errors["sg"])
 
         # Auto-expand sections that failed validation so errors are visible
-        if errors["image"]:                        self._sec_image.expand()
-        if errors["instance_type"]:                self._sec_hardware.expand()
-        if errors["storage"]:                      self._sec_storage.expand()
-        if errors["vpc"] or errors["subnet"]:      self._sec_network.expand()
-        if errors["key"]:                          self._sec_security.expand()
+        if errors["image"]:                              self._sec_image.expand()
+        if errors["instance_type"]:                      self._sec_hardware.expand()
+        if errors["storage"]:                            self._sec_storage.expand()
+        if errors["vpc"] or errors["subnet"]:            self._sec_network.expand()
+        if errors["key"] or errors["sg"]:                self._sec_security.expand()
 
         if any(errors.values()):
             return None
@@ -286,7 +293,13 @@ class ConfigForm(QScrollArea):
             )
             iam_profile = domain_cfg.iam_profile
         else:
-            user_data_template = None
+            # No domain join — still apply timezone and DNS via minimal UserData.
+            # tzutil /s is Windows-only; on Linux it is a no-op.
+            from tools.ec2_launcher.ui.userdata_builder import build_timezone_userdata
+            user_data_template = build_timezone_userdata(
+                timezone=self._windows.get_timezone(),
+                dns_servers=self._windows.get_dns_servers(),
+            )
             iam_profile = None
 
         return LaunchConfig(
@@ -329,6 +342,12 @@ class ConfigForm(QScrollArea):
             missing.append("Subnet")
         if not self._security.get_key_name():
             missing.append("Key Pair")
+
+        if not self._security.get_sg_ids() and not self.has_pending_sg():
+            missing.append(
+                "Security Group — at least one must be selected "
+                "(no default SG will be applied)"
+            )
 
         if self._windows.get_domain_config() is not None:
             blank_indices = self._instances.mark_blank_errors()

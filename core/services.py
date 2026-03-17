@@ -11,7 +11,7 @@ class ResourceService:
         self.adapter = adapter
 
     def list_all_vpcs(self, region: str) -> List[Vpc]:
-        """It lists all VPCs."""
+        """List all VPCs in the given region."""
         return self.adapter.list_vpcs(region)
 
     def list_subnets_for_vpc(self, region: str, vpc_id: str) -> List[Subnet]:

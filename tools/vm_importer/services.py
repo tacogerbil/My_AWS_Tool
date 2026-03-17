@@ -6,14 +6,10 @@ import logging
 from typing import List, Optional, Dict, Any, Callable
 from botocore.exceptions import ClientError
 
-# MCCC: Explicit Logging
 logger = logging.getLogger(__name__)
 
 class MultipartUploader:
-    """
-    Handles S3 Multipart Uploads.
-    Strictly follows 'aws-vm-import' SKILL allowed operations.
-    """
+    """Handles S3 multipart uploads for large VM image files."""
     # 10 MB Part Size
     PART_SIZE = 10 * 1024 * 1024 
 
@@ -85,10 +81,7 @@ class MultipartUploader:
             return False
 
 class VmImportOrchestrator:
-    """
-    Orchestrates VM Import task.
-    Strictly follows 'aws-vm-import' SKILL allowed operations.
-    """
+    """Orchestrates the VM import workflow: S3 upload → EC2 import-image task."""
     def __init__(self, ec2_client, s3_client):
         self.ec2 = ec2_client
         self.uploader = None # initialized per task if needed? or pass client

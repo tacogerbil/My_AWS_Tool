@@ -31,7 +31,8 @@ class LandingWindow(QMainWindow):
         self.resize(1000, 700)
         
         # Keep reference to secondary window so it doesn't GC
-        self.resource_browser = None 
+        self.resource_browser = None
+        self.abort_flag = False 
         
         # Central Widget
         central = QWidget()
@@ -118,9 +119,6 @@ class LandingWindow(QMainWindow):
         browse_layout.addWidget(self.file_input)
         browse_layout.addWidget(self.file_btn)
         
-        browse_layout.addWidget(self.file_input)
-        browse_layout.addWidget(self.file_btn)
-        
         # S3 Bucket (Dropdown)
         self.bucket_combo = QComboBox()
         self.bucket_combo.setEditable(True) 
@@ -158,21 +156,6 @@ class LandingWindow(QMainWindow):
         adv_layout.addRow("Architecture:", self.arch_combo)
         adv_layout.addRow("License:", self.lic_combo)
 
-        note_text = ""
-
-        if note_text:
-            self.note_label = QLabel(note_text)
-            self.note_label.setWordWrap(True)
-            self.note_label.setStyleSheet("""
-                background-color: #fffff0; 
-                border: 1px solid #e0e0d0; 
-                border-radius: 4px; 
-                padding: 5px; 
-                font-style: italic; 
-                color: #555;
-            """)
-            adv_layout.addRow(self.note_label)
-        
         self.form_layout.addRow("VM File:", browse_layout)
         self.form_layout.addRow("S3 Bucket:", self.bucket_combo)
         self.form_layout.addRow("Description:", self.desc_input)
@@ -397,23 +380,6 @@ class LandingWindow(QMainWindow):
             if self._config is not None and self._config_adapter is not None:
                 self._config.last_vm_dir = os.path.dirname(fname)
                 self._config_adapter.save(self._config)
-
-    def start_import(self):
-        file_path = self.file_input.text()
-        bucket = self.bucket_combo.currentText()
-        desc = self.desc_input.text()
-        
-        if not file_path or not bucket:
-            QMessageBox.warning(self, "Missing Info", "Please provide File and Bucket.")
-            return
-            
-        if not os.path.exists(file_path):
-            QMessageBox.warning(self, "Error", "File does not exist.")
-            return
-            
-        if not self.orchestrator:
-             QMessageBox.critical(self, "Error", "Orchestrator not initialized.")
-             return
 
     def request_cancellation(self):
         """Sets the abort flag."""

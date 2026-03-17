@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -286,8 +287,14 @@ class SecuritySection(QWidget):
         else:
             self._kp_combo.setEditText(name)
 
-    def mark_error(self, has_error: bool) -> None:
-        self._kp_combo.setStyleSheet(_ERROR_STYLE if has_error else _NORMAL_STYLE)
+    def mark_error(self, key_error: bool, sg_error: bool = False) -> None:
+        self._kp_combo.setStyleSheet(_ERROR_STYLE if key_error else _NORMAL_STYLE)
+        self._sg_combo.setStyleSheet(_ERROR_STYLE if sg_error else _NORMAL_STYLE)
+        if sg_error:
+            self._sg_count_lbl.setText("⚠  At least one security group is required")
+            self._sg_count_lbl.setStyleSheet(
+                "color: #e74c3c; font-size: 11px; font-weight: bold;"
+            )
 
     def set_service(self, service) -> None:
         """Inject the LauncherService so key pair creation can call AWS."""

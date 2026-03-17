@@ -216,12 +216,6 @@ class AwsAdapter(CloudProviderPort):
             for reservation in response.get("Reservations", []):
                 for item in reservation.get("Instances", []):
                     tags = self._get_tags(item)
-                    # Safe extraction for nested fields
-                    state = item["State"]["Name"]
-                    public_ip = item.get("PublicIpAddress")
-                    private_ip = item.get("PrivateIpAddress")
-                    
-                    # SGs
                     sgs = [SecurityGroup(
                         group_id=sg["GroupId"],
                         group_name=sg["GroupName"],

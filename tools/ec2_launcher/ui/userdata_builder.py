@@ -1,5 +1,14 @@
 """
-userdata_builder.py — Pure function: WindowsDomainConfig → PowerShell UserData.
+userdata_builder.py — Pure functions: PowerShell UserData generators for Windows EC2 instances.
+
+Two entry points
+----------------
+build_timezone_userdata(timezone, dns_servers)
+    Minimal script: sets timezone via tzutil and optional DNS servers.
+    Use when launching Windows instances WITHOUT domain join.
+
+build_windows_userdata(cfg, timezone, dns_servers)
+    Full domain-join script (Phase 1 + optional Phase 2).
 
 No side effects.  No I/O.  No Qt.  Unit-testable in isolation.
 
@@ -40,6 +49,48 @@ INSTANCE_NAME_MARKER = "<<INSTANCE_NAME>>"
 
 # Tag key used for domain join progress visible in EC2 console and the monitor
 DOMAIN_JOIN_TAG_KEY = "DomainJoinStatus"
+
+
+def build_timezone_userdata(
+    timezone: str = "Pacific Standard Time",
+    dns_servers: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Minimal PowerShell UserData to set timezone and optional DNS servers.
+
+    Used for Windows instances that do NOT require domain join.
+    Returns None when timezone is empty and no DNS servers are provided.
+
+    Parameters
+    ----------
+    timezone:    Windows tzutil identifier (e.g. 'Pacific Standard Time').
+    dns_servers: Optional DNS server IPs applied via Set-DnsClientServerAddress.
+    """
+    timezone = timezone.strip()
+    dns_servers = dns_servers or []
+
+    if not timezone and not dns_servers:
+        return None
+
+    lines: list = [
+        "<powershell>",
+        # Continue on error so a missing tzutil (Linux) doesn't abort DNS config
+        "$ErrorActionPreference = 'Continue'",
+        "",
+    ]
+
+    if timezone:
+        safe_tz = _escape_ps_dq(timezone)
+        lines.append(f'tzutil /s "{safe_tz}"')
+
+    if dns_servers:
+        dns_csv = ", ".join(f'"{ip}"' for ip in dns_servers)
+        lines.append(
+            f"Set-DnsClientServerAddress -InterfaceAlias 'Ethernet*'"
+            f" -ServerAddresses ({dns_csv})"
+        )
+
+    lines.append("</powershell>")
+    return "\n".join(lines)
 
 
 def build_windows_userdata(

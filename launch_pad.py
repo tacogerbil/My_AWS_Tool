@@ -234,7 +234,7 @@ class LaunchPad(QMainWindow):
         from tools.ec2_launcher.services import LauncherService
 
         if self.adapter:
-            launcher_service = LauncherService(self.adapter)
+            launcher_service = LauncherService(self.adapter, region=self._config.region)
         else:
             logger.warning("Offline mode: EC2 Launcher has no real adapter.")
             launcher_service = None

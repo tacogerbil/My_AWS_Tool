@@ -61,7 +61,7 @@ def main() -> None:
         logger.info("Starting in GUI mode...")
         try:
             from PySide6.QtWidgets import QApplication
-            from ui.gui.landing_window import LandingWindow
+            from tools.vm_importer.ui.main_window import LandingWindow
 
             app = QApplication(sys.argv)
             window = LandingWindow(service, current_region=region)
