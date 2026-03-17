@@ -77,6 +77,11 @@ class LauncherWindow(QWidget):
         row.addWidget(title)
         row.addStretch()
 
+        self._ami_status_label = QLabel("")
+        self._ami_status_label.setStyleSheet("color: #f39c12; font-size: 11px;")
+        row.addWidget(self._ami_status_label)
+        row.addSpacing(16)
+
         self._launch_btn = QPushButton("Launch Instance")
         self._launch_btn.setFixedWidth(140)
         self._launch_btn.setStyleSheet(
@@ -139,6 +144,7 @@ class LauncherWindow(QWidget):
             self._config_form.set_service(self._service)
             self._config_form.set_instance_profiles(profiles)
             self._reference_panel.set_instances(instances)
+            self._update_ami_status(quick_start_amis, my_amis)
         except Exception as exc:
             logger.error("Failed to load AWS data: %s", exc)
             QMessageBox.warning(self, "Load Error", f"Could not load AWS data:\n{exc}")
@@ -458,6 +464,25 @@ class LauncherWindow(QWidget):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _update_ami_status(self, quick_start_amis: list, my_amis: list) -> None:
+        """Show a warning in the toolbar when Quick Start AMIs fell back to hardcoded."""
+        from tools.ec2_launcher.services import _QUICK_START_FALLBACK
+        if quick_start_amis is _QUICK_START_FALLBACK:
+            self._ami_status_label.setText(
+                "⚠ Quick Start AMIs unavailable — using fallback. "
+                "Check ec2:DescribeImages permissions for public owners."
+            )
+            logger.warning(
+                "Quick Start AMI load fell back to hardcoded list. "
+                "This usually means ec2:DescribeImages is blocked for public "
+                "AMI owners (amazon, canonical, etc.) by an IAM/SCP policy."
+            )
+        else:
+            self._ami_status_label.setText(
+                f"✓ {len(quick_start_amis)} Quick Start · {len(my_amis)} My AMIs"
+            )
+            self._ami_status_label.setStyleSheet("color: #2ecc71; font-size: 11px;")
 
     @staticmethod
     def _applied_section_names(patch: SectionPatch) -> str:
