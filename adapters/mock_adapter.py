@@ -184,6 +184,16 @@ class MockAdapter(CloudProviderPort):
             key_type=key_type,
         )
 
+    def search_public_amis(
+        self,
+        region: str,
+        search_term: str,
+        owners: Optional[List[str]] = None,
+        max_results: int = 200,
+    ) -> List[Ami]:
+        """Return empty list — mock mode has no public AMI catalog."""
+        return []
+
     def put_ssm_parameters(self, region: str, params: Dict[str, str]) -> None:
         """No-op stub — mock mode never stores credentials."""
         pass

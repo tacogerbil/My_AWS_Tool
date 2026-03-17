@@ -259,6 +259,24 @@ class LauncherService:
         }
         self.adapter.put_ssm_parameters(self.region, params)
 
+    def search_marketplace_amis(self, search_term: str, max_results: int = 200) -> List[Ami]:
+        """Search AWS Marketplace AMIs by name substring."""
+        return self.adapter.search_public_amis(
+            self.region,
+            search_term,
+            owners=["aws-marketplace"],
+            max_results=max_results,
+        )
+
+    def search_community_amis(self, search_term: str, max_results: int = 200) -> List[Ami]:
+        """Search all public (community) AMIs by name substring."""
+        return self.adapter.search_public_amis(
+            self.region,
+            search_term,
+            owners=None,
+            max_results=max_results,
+        )
+
     def describe_instances_by_ids(self, instance_ids: List[str]) -> List[Instance]:
         """Poll current state for a specific list of instance IDs.
 

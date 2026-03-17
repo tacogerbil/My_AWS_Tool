@@ -179,3 +179,24 @@ class CloudProviderPort(ABC):
         picker in the EC2 Launcher — callers cache the result for the session.
         """
         pass
+
+    @abstractmethod
+    def search_public_amis(
+        self,
+        region: str,
+        search_term: str,
+        owners: Optional[List[str]] = None,
+        max_results: int = 200,
+    ) -> List["Ami"]:
+        """Search public AMIs by name substring.
+
+        Parameters
+        ----------
+        owners:
+            Optional owner filter, e.g. ``["aws-marketplace"]`` for Marketplace
+            AMIs.  ``None`` searches all public (community) AMIs.
+        max_results:
+            Cap on returned results — prevents runaway queries against the full
+            public AMI catalog.
+        """
+        pass

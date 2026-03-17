@@ -358,6 +358,7 @@ class ConfigForm(QScrollArea):
     def set_service(self, service) -> None:
         """Inject the LauncherService so sub-sections can make AWS calls (e.g. key pair creation)."""
         self._security.set_service(service)
+        self._image.set_service(service)
 
     def set_instance_profiles(self, profiles: List[str]) -> None:
         """Populate the permission profile dropdown in the Windows Setup section."""

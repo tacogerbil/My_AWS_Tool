@@ -408,6 +408,50 @@ class AwsAdapter(CloudProviderPort):
             logger.error("Failed to list instance type offerings: %s", exc)
             return []
 
+    def search_public_amis(
+        self,
+        region: str,
+        search_term: str,
+        owners: Optional[List[str]] = None,
+        max_results: int = 200,
+    ) -> List[Ami]:
+        """Search public AMIs by name substring.
+
+        Marketplace: pass owners=["aws-marketplace"].
+        Community:   pass owners=None (searches all public AMIs).
+        Results are capped at max_results and sorted newest-first.
+        """
+        try:
+            ec2 = self._ec2_for(region)
+            filters: List[Dict] = [
+                {"Name": "state",     "Values": ["available"]},
+                {"Name": "is-public", "Values": ["true"]},
+                {"Name": "name",      "Values": [f"*{search_term}*"]},
+            ]
+            kwargs: Dict = {"Filters": filters, "MaxResults": max_results}
+            if owners:
+                kwargs["Owners"] = owners
+            response = ec2.describe_images(**kwargs)
+            amis = [
+                Ami(
+                    image_id=item["ImageId"],
+                    name=item.get("Name", "Unnamed"),
+                    description=item.get("Description", ""),
+                    platform=item.get("PlatformDetails", "Linux/UNIX"),
+                    tags=self._get_tags(item),
+                    creation_date=item.get("CreationDate"),
+                    architecture=item.get("Architecture"),
+                    virtualization_type=item.get("VirtualizationType"),
+                    root_device_type=item.get("RootDeviceType"),
+                    ena_support=item.get("EnaSupport"),
+                )
+                for item in response.get("Images", [])
+            ]
+            return sorted(amis, key=lambda a: a.creation_date or "", reverse=True)
+        except (ClientError, BotoCoreError) as exc:
+            logger.error("Error searching public AMIs (owners=%s term=%r): %s", owners, search_term, exc)
+            return []
+
     def list_buckets(self) -> List[str]:
         """List all S3 buckets (global service)."""
         try:
